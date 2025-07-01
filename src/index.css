@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mejoras para móviles */
+@layer base {
+  /* Desactivar zoom en inputs para iOS */
+  input, select, textarea {
+    font-size: 16px;
+  }
+  
+  /* Mejorar el comportamiento táctil */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+  
+  /* Suavizar scroll en móviles */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Mejorar la tipografía en móviles */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'kern';
+  }
+  
+  /* Asegurar que los botones sean táctiles en móviles */
+  button, [role="button"], input[type="submit"], input[type="button"] {
+    cursor: pointer;
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Mejorar inputs en móviles */
+  input, textarea, select {
+    -webkit-appearance: none;
+    border-radius: 0.5rem;
+  }
+  
+  /* Prevenir el bounce en iOS */
+  html, body {
+    position: fixed;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  
+  #root {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: auto;
+  }
+}
+
+/* Utilidades responsivas adicionales */
+@layer utilities {
+  /* Espaciado táctil optimizado */
+  .touch-spacing {
+    padding: 0.75rem;
+    margin: 0.25rem;
+  }
+  
+  /* Texto legible en móviles */
+  .text-mobile {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  
+  /* Contenedores con scroll suave */
+  .smooth-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Tablas responsive */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Cards optimizadas para touch */
+  .card-touch {
+    min-height: 44px;
+    padding: 1rem;
+    border-radius: 0.75rem;
+  }
+  
+  /* Espaciado adaptativo */
+  .spacing-adaptive {
+    padding: 0.75rem;
+  }
+  
+  /* Contenedor mobile-friendly */
+  .container-mobile {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}
+
+/* Media queries para optimizaciones específicas */
+@media (max-width: 768px) {
+  /* Reducir animaciones en móviles para mejor performance */
+  .motion-reduce-mobile {
+    animation-duration: 0.1s !important;
+    transition-duration: 0.1s !important;
+  }
+  
+  /* Headers más compactos */
+  h1 {
+    font-size: 1.5rem !important;
+    line-height: 1.3;
+  }
+  
+  h2 {
+    font-size: 1.25rem !important;
+    line-height: 1.3;
+  }
+  
+  /* Botones táctiles óptimos */
+  button, .btn {
+    min-height: 44px !important;
+    min-width: 44px !important;
+    padding: 0.75rem 1rem !important;
+  }
+  
+  /* Inputs más grandes para facilitar la escritura */
+  input, textarea, select {
+    min-height: 44px !important;
+    padding: 0.75rem !important;
+    font-size: 16px !important;
+  }
+  
+  /* Cards más compactas */
+  .card, .bg-gray-900 {
+    padding: 1rem !important;
+    margin-bottom: 1rem;
+  }
+  
+  /* Botón de logout especial para móviles */
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 80px) !important;
+  }
+  
+  /* Asegurar que el sidebar ocupe toda la altura en móviles */
+  .fixed.left-0.top-0.bottom-0 {
+    height: 100vh !important;
+    height: 100dvh !important; /* Dynamic viewport height */
+  }
+}
+
+/* Mejoras para pantallas muy pequeñas */
+@media (max-width: 480px) {
+  /* Reducir padding en pantallas muy pequeñas */
+  .p-adaptive {
+    padding: 0.5rem !important;
+  }
+  
+  /* Asegurar que los textos sean legibles */
+  .text-adaptive {
+    font-size: 14px !important;
+  }
+  
+  /* Grid más simple en móviles */
+  .grid-responsive {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem !important;
+  }
+  
+  /* Flex más simple */
+  .flex-responsive {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+  }
+}
+
+/* Dark mode optimizado para móviles */
+@media (prefers-color-scheme: dark) {
+  input, textarea, select {
+    background-color: rgb(31 41 55);
+    border-color: rgb(75 85 99);
+    color: white;
+  }
+}
+
+/* Mejoras para landscape en móviles */
+@media (orientation: landscape) and (max-height: 500px) {
+  .landscape-compact {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+  
+  /* Headers más compactos en landscape */
+  h1, h2, h3 {
+    margin-bottom: 0.5rem !important;
+  }
+}
+
+/* Mejoras para tablets */
+@media (min-width: 768px) and (max-width: 1024px) {
+  /* Optimizar para tablets */
+  .tablet-optimized {
+    padding: 1.5rem;
+  }
+  
+  /* Grids intermedios */
+  .grid-tablet {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+/* Estados de focus mejorados para navegación por teclado */
+@layer utilities {
+  .focus-visible-enhanced:focus-visible {
+    outline: 2px solid #dc2626;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
+  
+  /* Safe Area para móviles - evita que el contenido sea tapado por barras del navegador */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 2rem);
+    margin-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+  
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
+  
+  .safe-area-left {
+    padding-left: env(safe-area-inset-left, 0);
+  }
+  
+  .safe-area-right {
+    padding-right: env(safe-area-inset-right, 0);
+  }
+}

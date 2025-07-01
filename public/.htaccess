@@ -1,0 +1,10 @@
+Options -MultiViews
+RewriteEngine On
+
+# Establecer base para se7en
+RewriteBase /se7en/
+
+# Manejar todas las rutas SPA dentro de se7en
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . index.html [L] 

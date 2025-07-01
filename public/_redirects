@@ -1,0 +1,3 @@
+# Redirects for Se7en Barbershop SPA
+/se7en/* /se7en/index.html 200!
+/* /index.html 200 

@@ -1,0 +1,26 @@
+{
+  "name": "Se7en Barbershop",
+  "short_name": "Se7en",
+  "description": "Sistema de gestión para Barbería Se7en",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#dc2626",
+  "orientation": "portrait-primary",
+  "scope": "./",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "./logo-se7en.jpeg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "./logo-se7en.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+} 
