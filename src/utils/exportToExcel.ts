@@ -13,6 +13,10 @@ export interface VentasPorCajero {
   plusAutomatico?: number;
   plusManual?: number;
   totalPlus?: number;
+  // Adelantos data
+  adelantosPendientes?: number;
+  adelantosDescontados?: number;
+  totalAdelantos?: number;
 }
 
 export type TipoPeriodo = 'dia' | 'semana' | 'mes';
@@ -29,6 +33,21 @@ export const exportVentasToExcel = (
   fechaFin: Date,
   tipoPeriodo: TipoPeriodo = 'mes'
 ) => {
+  console.log('📊 Exportando Excel con datos:', {
+    fechaInicio: fechaInicio.toISOString(),
+    fechaFin: fechaFin.toISOString(),
+    tipoPeriodo,
+    totalCajeros: ventasPorCajero.length,
+    ventasPorCajero: ventasPorCajero.map(c => ({
+      cajero: c.cajeroNombre,
+      totalVentas: c.totalVentas,
+      cantidadServicios: c.cantidadServicios,
+      plusAutomatico: c.plusAutomatico,
+      plusManual: c.plusManual,
+      totalPlus: c.totalPlus
+    }))
+  });
+
   const wb = XLSX.utils.book_new();
   
   // Título y período
@@ -67,16 +86,22 @@ export const exportVentasToExcel = (
   const totalCajeros = cajeros.reduce((sum, c) => sum + c.totalVentas, 0);
   const comisionCajeros = totalCajeros * 0.5;
   const totalPlusCalculado = cajeros.reduce((sum, c) => sum + (c.plusAutomatico || 0) + (c.plusManual || 0), 0);
-  const totalParaCajeros = comisionCajeros + totalPlusCalculado;
+  const totalAdelantosCalculado = cajeros.reduce((sum, c) => sum + (c.adelantosPendientes || 0), 0);
+  const totalParaCajeros = comisionCajeros + totalPlusCalculado - totalAdelantosCalculado;
 
   if (adminCajero) {
     const paraAdmin = adminCajero.totalVentas + comisionCajeros;
     resumenData.push(['Admin (100% propio + 50% cajeros):', `$${paraAdmin.toLocaleString()}`]);
   }
   
-  if (totalPlusCalculado > 0) {
+  if (totalPlusCalculado > 0 || totalAdelantosCalculado > 0) {
     resumenData.push(['Cajeros (50% comisión):', `$${comisionCajeros.toLocaleString()}`]);
-    resumenData.push(['Cajeros (plus adicional):', `$${totalPlusCalculado.toLocaleString()}`]);
+    if (totalPlusCalculado > 0) {
+      resumenData.push(['Cajeros (plus adicional):', `$${totalPlusCalculado.toLocaleString()}`]);
+    }
+    if (totalAdelantosCalculado > 0) {
+      resumenData.push(['Cajeros (adelantos pendientes):', `-$${totalAdelantosCalculado.toLocaleString()}`]);
+    }
     resumenData.push(['TOTAL PARA CAJEROS:', `$${totalParaCajeros.toLocaleString()}`]);
   } else {
     resumenData.push(['Cajeros (50% comisión):', `$${comisionCajeros.toLocaleString()}`]);
@@ -98,24 +123,26 @@ export const exportVentasToExcel = (
   XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen Ejecutivo');
 
   // ==================== HOJA 2: PAGOS A CAJEROS ====================
-  // Verificar si hay plus para decidir estructura
+  // Verificar si hay plus o adelantos para decidir estructura
   const hayPlusAutomatico = cajeros.some(c => (c.plusAutomatico || 0) > 0);
   const hayPlusManual = cajeros.some(c => (c.plusManual || 0) > 0);
   const hayAlgunPlus = hayPlusAutomatico || hayPlusManual;
+  const hayAdelantos = cajeros.some(c => (c.adelantosPendientes || 0) > 0);
 
   const pagosData: string[][] = [
     [`💵 PAGOS A CAJEROS - ${formatoFecha}`],
     [''],
-    ['Sistema: Cajeros reciben 50% + Plus (adicional al 50%)'],
+    ['Sistema: Cajeros reciben 50% + Plus - Adelantos Pendientes'],
     ['']
   ];
 
-  // Headers dinámicos según si hay plus o no
-  if (hayAlgunPlus) {
-    pagosData.push(['Cajero', 'Facturado', 'Comisión 50%', 'Plus Total', 'PAGO TOTAL']);
-  } else {
-    pagosData.push(['Cajero', 'Facturado', 'Comisión 50%', 'PAGO TOTAL']);
-  }
+  // Headers dinámicos según si hay plus y/o adelantos
+  const headers = ['Cajero', 'Facturado', 'Comisión 50%'];
+  if (hayAlgunPlus) headers.push('Plus Total');
+  if (hayAdelantos) headers.push('Adelantos');
+  headers.push('PAGO TOTAL');
+  
+  pagosData.push(headers);
   
   pagosData.push(['']);
 
@@ -123,24 +150,25 @@ export const exportVentasToExcel = (
   cajeros.forEach(cajero => {
     const comision = cajero.totalVentas * 0.5;
     const plusTotal = (cajero.plusAutomatico || 0) + (cajero.plusManual || 0);
-    const pagoTotal = comision + plusTotal;
+    const adelantosPendientes = cajero.adelantosPendientes || 0;
+    const pagoTotal = comision + plusTotal - adelantosPendientes;
+    
+    const fila = [
+      cajero.cajeroNombre,
+      `$${cajero.totalVentas.toLocaleString()}`,
+      `$${comision.toLocaleString()}`
+    ];
     
     if (hayAlgunPlus) {
-      pagosData.push([
-        cajero.cajeroNombre,
-        `$${cajero.totalVentas.toLocaleString()}`,
-        `$${comision.toLocaleString()}`,
-        plusTotal > 0 ? `$${plusTotal.toLocaleString()}` : '-',
-        `$${pagoTotal.toLocaleString()}`
-      ]);
-    } else {
-      pagosData.push([
-        cajero.cajeroNombre,
-        `$${cajero.totalVentas.toLocaleString()}`,
-        `$${comision.toLocaleString()}`,
-        `$${pagoTotal.toLocaleString()}`
-      ]);
+      fila.push(plusTotal > 0 ? `$${plusTotal.toLocaleString()}` : '-');
     }
+    
+    if (hayAdelantos) {
+      fila.push(adelantosPendientes > 0 ? `-$${adelantosPendientes.toLocaleString()}` : '-');
+    }
+    
+    fila.push(`$${pagoTotal.toLocaleString()}`);
+    pagosData.push(fila);
   });
 
   // Totales
@@ -148,24 +176,25 @@ export const exportVentasToExcel = (
   const totalFacturado = cajeros.reduce((sum, c) => sum + c.totalVentas, 0);
   const totalComision = cajeros.reduce((sum, c) => sum + c.totalVentas * 0.5, 0);
   const totalPlus = cajeros.reduce((sum, c) => sum + (c.plusAutomatico || 0) + (c.plusManual || 0), 0);
-  const totalPagoFinal = totalComision + totalPlus;
+  const totalAdelantos = cajeros.reduce((sum, c) => sum + (c.adelantosPendientes || 0), 0);
+  const totalPagoFinal = totalComision + totalPlus - totalAdelantos;
 
+  const filaTotales = [
+    'TOTALES:', 
+    `$${totalFacturado.toLocaleString()}`,
+    `$${totalComision.toLocaleString()}`
+  ];
+  
   if (hayAlgunPlus) {
-    pagosData.push([
-      'TOTALES:', 
-      `$${totalFacturado.toLocaleString()}`,
-      `$${totalComision.toLocaleString()}`,
-      totalPlus > 0 ? `$${totalPlus.toLocaleString()}` : '-',
-      `$${totalPagoFinal.toLocaleString()}`
-    ]);
-  } else {
-    pagosData.push([
-      'TOTALES:', 
-      `$${totalFacturado.toLocaleString()}`,
-      `$${totalComision.toLocaleString()}`,
-      `$${totalPagoFinal.toLocaleString()}`
-    ]);
+    filaTotales.push(totalPlus > 0 ? `$${totalPlus.toLocaleString()}` : '-');
   }
+  
+  if (hayAdelantos) {
+    filaTotales.push(totalAdelantos > 0 ? `-$${totalAdelantos.toLocaleString()}` : '-');
+  }
+  
+  filaTotales.push(`$${totalPagoFinal.toLocaleString()}`);
+  pagosData.push(filaTotales);
 
   // Solo agregar desglose detallado si hay plus Y si es útil mostrarlo
   if (hayPlusAutomatico && hayPlusManual) {
@@ -189,12 +218,13 @@ export const exportVentasToExcel = (
   }
 
   const wsPagos = XLSX.utils.aoa_to_sheet(pagosData);
-  // Ajustar ancho de columnas dinámicamente según si hay plus o no
-  if (hayAlgunPlus) {
-    wsPagos['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 18 }];
-  } else {
-    wsPagos['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 18 }, { wch: 20 }];
-  }
+  // Ajustar ancho de columnas dinámicamente según columnas presentes
+  const columns = [{ wch: 20 }, { wch: 15 }, { wch: 15 }]; // Cajero, Facturado, Comisión
+  if (hayAlgunPlus) columns.push({ wch: 15 }); // Plus
+  if (hayAdelantos) columns.push({ wch: 15 }); // Adelantos
+  columns.push({ wch: 18 }); // Pago Total
+  
+  wsPagos['!cols'] = columns;
   XLSX.utils.book_append_sheet(wb, wsPagos, 'Pagos a Cajeros');
 
   // ==================== HOJA 3: DETALLE DE VENTAS ====================

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Users, Calendar, ShoppingCart, PlusCircle, UserPlus, DollarSign } from 'lucide-react';
+import { Users, Calendar, ShoppingCart, PlusCircle, UserPlus, DollarSign, CreditCard } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export const CajeroDashboard: React.FC = () => {
@@ -10,6 +10,7 @@ export const CajeroDashboard: React.FC = () => {
     { icon: Users, label: 'Clientes', path: 'clientes' },
     { icon: Calendar, label: 'Agenda', path: 'agenda' },
     { icon: ShoppingCart, label: 'Ventas', path: 'ventas' },
+    { icon: CreditCard, label: 'Adelantos', path: 'adelantos' },
   ];
 
   return (
@@ -23,7 +24,7 @@ export const CajeroDashboard: React.FC = () => {
       </h1>
       
       {/* Quick Access Buttons - Optimizados para móviles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -48,10 +49,20 @@ export const CajeroDashboard: React.FC = () => {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => navigate('ventas')}
-          className="bg-gradient-to-r from-green-600 to-green-800 text-white p-6 md:p-8 rounded-lg shadow-lg flex flex-col items-center justify-center space-y-2 transform transition-all duration-300 hover:shadow-xl min-h-[120px] touch-manipulation sm:col-span-2 lg:col-span-1"
+          className="bg-gradient-to-r from-green-600 to-green-800 text-white p-6 md:p-8 rounded-lg shadow-lg flex flex-col items-center justify-center space-y-2 transform transition-all duration-300 hover:shadow-xl min-h-[120px] touch-manipulation"
         >
           <DollarSign size={32} className="md:w-10 md:h-10" />
           <span className="text-base md:text-lg font-semibold text-center">Registrar Venta</span>
+        </motion.button>
+
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={() => navigate('adelantos')}
+          className="bg-gradient-to-r from-orange-600 to-orange-800 text-white p-6 md:p-8 rounded-lg shadow-lg flex flex-col items-center justify-center space-y-2 transform transition-all duration-300 hover:shadow-xl min-h-[120px] touch-manipulation"
+        >
+          <CreditCard size={32} className="md:w-10 md:h-10" />
+          <span className="text-base md:text-lg font-semibold text-center">Mis Adelantos</span>
         </motion.button>
       </div>
 

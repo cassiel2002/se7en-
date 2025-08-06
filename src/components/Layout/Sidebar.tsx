@@ -11,7 +11,8 @@ import {
   UserPlus,
   LogOut,
   X,
-  Star
+  Star,
+  CreditCard
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { logoutUser } from '../../firebase/auth';
@@ -55,14 +56,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { icon: ShoppingCart, label: 'Ventas', path: '/ventas' },
     { icon: BarChart3, label: 'Reportes', path: '/reportes' },
     { icon: UserPlus, label: 'Cajeros', path: '/cajeros' },
-    { icon: Star, label: 'Encargados', path: '/encargados' }
+    { icon: Star, label: 'Encargados', path: '/encargados' },
+    { icon: CreditCard, label: 'Adelantos', path: '/adelantos' }
   ];
 
   const cajeroMenuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Calendar, label: 'Agenda', path: '/cajero/agenda' },
     { icon: Users, label: 'Clientes', path: '/cajero/clientes' },
-    { icon: ShoppingCart, label: 'Ventas', path: '/cajero/ventas' }
+    { icon: ShoppingCart, label: 'Ventas', path: '/cajero/ventas' },
+    { icon: CreditCard, label: 'Adelantos', path: '/cajero/adelantos' }
   ];
 
   const menuItems = profile?.role === 'admin' ? adminMenuItems : cajeroMenuItems;

@@ -13,6 +13,7 @@ import { Reportes } from './pages/Reportes';
 import { Cajeros } from './pages/Cajeros';
 import { CajeroDashboard } from './pages/CajeroDashboard';
 import { GestionEncargados } from './pages/GestionEncargados';
+import { GestionAdelantos } from './pages/GestionAdelantos';
 import { initializeDefaultUsers } from './firebase/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalLoading } from './components/GlobalLoading';
@@ -90,6 +91,7 @@ const AppRoutes: React.FC = () => {
         <Route path="/reportes" element={<ProtectedRoute requiredRoles={['admin']}><Reportes /></ProtectedRoute>} />
         <Route path="/cajeros" element={<ProtectedRoute requiredRoles={['admin']}><Cajeros /></ProtectedRoute>} />
         <Route path="/encargados" element={<ProtectedRoute requiredRoles={['admin']}><GestionEncargados /></ProtectedRoute>} />
+        <Route path="/adelantos" element={<ProtectedRoute requiredRoles={['admin']}><GestionAdelantos /></ProtectedRoute>} />
 
         {/* Cashier Dashboard nested routes - also needs ProtectedRoute for role check on the parent */}
         <Route path="/cajero" element={<ProtectedRoute requiredRoles={['cashier']}><CajeroDashboard /></ProtectedRoute>}>
@@ -97,6 +99,7 @@ const AppRoutes: React.FC = () => {
           <Route path="clientes" element={<Clientes />} />
           <Route path="agenda" element={<Agenda />} />
           <Route path="ventas" element={<Ventas />} />
+          <Route path="adelantos" element={<GestionAdelantos />} />
         </Route>
 
         {/* Catch-all for any unmatched paths within the protected layout */}

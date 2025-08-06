@@ -23,7 +23,8 @@ import {
   getVentas, 
   getClientes, 
   getServiciosActivos,
-  deleteVenta
+  deleteVenta,
+  createCliente
 } from '../firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
@@ -36,6 +37,10 @@ interface VentaFormData {
   clienteId: string;
   servicioId: string;
   metodoPago: 'efectivo' | 'transferencia';
+  // Campos para cliente nuevo
+  nuevoClienteNombre?: string;
+  nuevoClienteTelefono?: string;
+  nuevoClienteDni?: string;
 }
 
 export const Ventas: React.FC = () => {
@@ -52,6 +57,7 @@ export const Ventas: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false); // Nuevo estado
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [fromTurno, setFromTurno] = useState<boolean>(false);
+  const [showCreateClient, setShowCreateClient] = useState(false); // Estado para mostrar formulario de cliente nuevo
 
   const { register, handleSubmit, reset, formState: { errors }, setValue } = useForm<VentaFormData>(); // Destructure setValue
 
@@ -112,8 +118,8 @@ export const Ventas: React.FC = () => {
   };
 
   const onSubmit = async (data: VentaFormData) => {
-    if (!selectedClient || !user) {
-      toast.error('Selecciona un cliente válido');
+    if (!user) {
+      toast.error('Usuario no autenticado');
       return;
     }
 
@@ -126,9 +132,46 @@ export const Ventas: React.FC = () => {
     setIsSubmitting(true);
     
     try {
+      let clienteParaVenta = selectedClient;
+
+      // Si no hay cliente seleccionado pero hay datos para crear uno nuevo
+      if (!selectedClient && showCreateClient) {
+        if (!data.nuevoClienteNombre || !data.nuevoClienteTelefono) {
+          toast.error('Completa al menos nombre y teléfono del cliente');
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Crear nuevo cliente
+        const nuevoCliente = {
+          nombre: data.nuevoClienteNombre,
+          telefono: data.nuevoClienteTelefono,
+          dni: data.nuevoClienteDni || undefined, // DNI opcional
+          visitas: 0
+        };
+
+        console.log('🆕 Creando nuevo cliente:', nuevoCliente);
+        const clienteId = await createCliente(nuevoCliente);
+        clienteParaVenta = {
+          id: clienteId,
+          ...nuevoCliente,
+          createdAt: new Date()
+        };
+        
+        // Recargar lista de clientes
+        await loadData();
+        toast.success('Cliente creado exitosamente');
+      }
+
+      if (!clienteParaVenta) {
+        toast.error('Selecciona un cliente válido o crea uno nuevo');
+        setIsSubmitting(false);
+        return;
+      }
+
       const ventaData = {
-        clienteId: selectedClient.id || '',
-        clienteNombre: selectedClient.nombre,
+        clienteId: clienteParaVenta.id || '',
+        clienteNombre: clienteParaVenta.nombre,
         servicioId: data.servicioId,
         servicioNombre: selectedService.nombre,
         precio: selectedService.precio,
@@ -144,6 +187,7 @@ export const Ventas: React.FC = () => {
       toast.success('Venta registrada exitosamente');
       setShowForm(false);
       setFromTurno(false);
+      setShowCreateClient(false);
       reset();
       setSelectedClient(null);
       setClienteSearchTerm('');
@@ -241,6 +285,9 @@ export const Ventas: React.FC = () => {
           <button
             onClick={() => {
               setShowForm(true);
+              setShowCreateClient(false);
+              setSelectedClient(null);
+              setClienteSearchTerm('');
               reset();
             }}
             className="bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg flex items-center justify-center space-x-2 transition-colors touch-manipulation min-h-[44px] flex-shrink-0"
@@ -292,42 +339,95 @@ export const Ventas: React.FC = () => {
           
           <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Cliente *
-              </label>
-              <input
-                type="text"
-                placeholder="Buscar cliente por nombre o DNI..."
-                value={clienteSearchTerm}
-                onChange={(e) => {
-                  setClienteSearchTerm(e.target.value);
-                  setSelectedClient(null); // Clear selected client on search change
-                  setValue('clienteId', ''); // Clear form value
-                }}
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
-              />
-              {clienteSearchTerm && filteredClients.length > 0 && (
-                <ul className="bg-gray-800 border border-gray-700 rounded-lg mt-2 max-h-48 overflow-y-auto z-10 relative">
-                  {filteredClients.map(cliente => (
-                    <li
-                      key={cliente.id}
-                      className="px-4 py-2 hover:bg-gray-700 cursor-pointer text-white"
-                      onClick={() => {
-                        setSelectedClient(cliente);
-                        setClienteSearchTerm(`${cliente.nombre} ${cliente.dni ? `(${cliente.dni})` : ''}`);
-                        setValue('clienteId', cliente.id || '');
-                      }}
-                    >
-                      {cliente.nombre} {cliente.dni && <span className="text-gray-400">({cliente.dni})</span>}
-                    </li>
-                  ))}
-                </ul>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-300">
+                  Cliente *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateClient(!showCreateClient);
+                    setSelectedClient(null);
+                    setClienteSearchTerm('');
+                    setValue('clienteId', '');
+                  }}
+                  className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {showCreateClient ? 'Buscar existente' : '+ Crear nuevo'}
+                </button>
+              </div>
+
+              {!showCreateClient ? (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Buscar cliente por nombre o DNI..."
+                    value={clienteSearchTerm}
+                    onChange={(e) => {
+                      setClienteSearchTerm(e.target.value);
+                      setSelectedClient(null);
+                      setValue('clienteId', '');
+                    }}
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  {clienteSearchTerm && filteredClients.length > 0 && (
+                    <ul className="bg-gray-800 border border-gray-700 rounded-lg mt-2 max-h-48 overflow-y-auto z-10 relative">
+                      {filteredClients.map(cliente => (
+                        <li
+                          key={cliente.id}
+                          className="px-4 py-2 hover:bg-gray-700 cursor-pointer text-white"
+                          onClick={() => {
+                            setSelectedClient(cliente);
+                            setClienteSearchTerm(`${cliente.nombre} ${cliente.dni ? `(${cliente.dni})` : ''}`);
+                            setValue('clienteId', cliente.id || '');
+                          }}
+                        >
+                          {cliente.nombre} {cliente.dni && <span className="text-gray-400">({cliente.dni})</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {!selectedClient && clienteSearchTerm && filteredClients.length === 0 && (
+                    <div className="mt-2">
+                      <p className="text-yellow-500 text-sm">No se encontraron clientes.</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateClient(true)}
+                        className="text-sm text-blue-400 hover:text-blue-300 mt-1"
+                      >
+                        ¿Crear nuevo cliente?
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    placeholder="Nombre del cliente *"
+                    {...register('nuevoClienteNombre')}
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Teléfono *"
+                    {...register('nuevoClienteTelefono')}
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  <input
+                    type="text"
+                    placeholder="DNI (opcional)"
+                    {...register('nuevoClienteDni')}
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  <p className="text-xs text-gray-400">
+                    💡 El DNI es opcional. Si no lo conoces, déjalo vacío.
+                  </p>
+                </div>
               )}
-              {errors.clienteId && (
+              
+              {errors.clienteId && !showCreateClient && (
                 <p className="text-red-500 text-sm mt-1">{errors.clienteId.message}</p>
-              )}
-              {!selectedClient && clienteSearchTerm && filteredClients.length === 0 && (
-                <p className="text-red-500 text-sm mt-1">No se encontraron clientes.</p>
               )}
             </div>
 
@@ -381,6 +481,7 @@ export const Ventas: React.FC = () => {
                 onClick={() => {
                   setShowForm(false);
                   setFromTurno(false);
+                  setShowCreateClient(false);
                   setSelectedClient(null);
                   setClienteSearchTerm('');
                   reset();

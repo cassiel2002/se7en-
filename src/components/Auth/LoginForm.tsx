@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, LogIn } from 'lucide-react';
+import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { loginUser } from '../../firebase/auth';
 import toast from 'react-hot-toast';
@@ -23,6 +23,40 @@ export const LoginForm: React.FC = () => {
     formState: { errors }
   } = useForm<LoginForm>();
 
+  const getErrorMessage = (error: any) => {
+    const errorCode = error.code || '';
+    const errorMessage = error.message || '';
+
+    // Mapear códigos de error de Firebase a mensajes amigables
+    if (errorCode.includes('auth/user-not-found') || 
+        errorCode.includes('auth/wrong-password') ||
+        errorCode.includes('auth/invalid-credential') ||
+        errorMessage.includes('invalid-email') ||
+        errorMessage.includes('user-not-found') ||
+        errorMessage.includes('wrong-password')) {
+      return 'Credenciales incorrectas. Verifica tu email y contraseña.';
+    }
+    
+    if (errorCode.includes('auth/invalid-email')) {
+      return 'El formato del email no es válido.';
+    }
+    
+    if (errorCode.includes('auth/user-disabled')) {
+      return 'Esta cuenta ha sido deshabilitada.';
+    }
+    
+    if (errorCode.includes('auth/too-many-requests')) {
+      return 'Demasiados intentos fallidos. Inténtalo más tarde.';
+    }
+
+    if (errorCode.includes('auth/network-request-failed')) {
+      return 'Error de conexión. Verifica tu internet.';
+    }
+
+    // Fallback para errores no específicos
+    return 'Credenciales incorrectas. Verifica tu email y contraseña.';
+  };
+
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
@@ -31,7 +65,8 @@ export const LoginForm: React.FC = () => {
       navigate('/dashboard');
     } catch (error: any) {
       console.error('Login error:', error);
-      toast.error(error.message || 'Error al iniciar sesión');
+      const friendlyMessage = getErrorMessage(error);
+      toast.error(friendlyMessage);
     } finally {
       setIsLoading(false);
     }
@@ -91,7 +126,6 @@ export const LoginForm: React.FC = () => {
               Email
             </label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
                 type="email"
                 {...register('email', { 
@@ -101,7 +135,7 @@ export const LoginForm: React.FC = () => {
                     message: 'Email inválido'
                   }
                 })}
-                className="w-full pl-10 pr-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent text-base min-h-[48px]"
+                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent text-base min-h-[48px]"
                 placeholder="tu@email.com"
                 autoComplete="email"
               />
@@ -117,11 +151,10 @@ export const LoginForm: React.FC = () => {
               Contraseña
             </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input
                 type={showPassword ? 'text' : 'password'}
                 {...register('password', { required: 'Contraseña requerida' })}
-                className="w-full pl-10 pr-12 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent text-base min-h-[48px]"
+                className="w-full pl-4 pr-12 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-transparent text-base min-h-[48px]"
                 placeholder="••••••••"
                 autoComplete="current-password"
               />
@@ -157,22 +190,18 @@ export const LoginForm: React.FC = () => {
           </motion.button>
         </form>
 
-        {/* Credenciales de Prueba */}
+        {/* Usuarios */}
         <div className="mt-6 text-center">
           <div className="bg-gray-800 p-3 rounded-lg border border-gray-700">
-            <p className="text-gray-300 text-sm font-semibold mb-2">📋 Cuentas de prueba:</p>
             <div className="space-y-1 text-xs">
               <div className="bg-gray-900 p-2 rounded border-l-2 border-green-500">
-                <p className="text-green-400 font-medium">👨‍💼 Admin</p>
-                <p className="text-gray-300 font-mono text-xs">admin@se7en.com / admin123</p>
+                <p className="text-green-400 font-medium">👨‍💼 faqu</p>
               </div>
               <div className="bg-gray-900 p-2 rounded border-l-2 border-blue-500">
-                <p className="text-blue-400 font-medium">👨‍💻 Cajero 1</p>
-                <p className="text-gray-300 font-mono text-xs">cajero1@seven.com / cajero1</p>
+                <p className="text-blue-400 font-medium">💇‍♂️ martins</p>
               </div>
               <div className="bg-gray-900 p-2 rounded border-l-2 border-purple-500">
-                <p className="text-purple-400 font-medium">👨‍💻 Cajero 2</p>
-                <p className="text-gray-300 font-mono text-xs">cajero2@seven.com / cajero2</p>
+                <p className="text-purple-400 font-medium">💇‍♂️ ltalamo</p>
               </div>
             </div>
           </div>

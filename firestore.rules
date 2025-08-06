@@ -58,6 +58,15 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ADELANTOS - Admin puede todo, cajeros pueden crear y leer los suyos
+    match /adelantos/{adelantoId} {
+      allow read: if isCajeroOrAdmin();
+      allow create: if isCajeroOrAdmin() && 
+                   (isAdmin() || request.auth.uid == request.resource.data.cajeroId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
     // CONFIGURACIÓN DEL SISTEMA - Solo admin
     match /config/{configId} {
       allow read, write: if isAdmin();

@@ -78,6 +78,21 @@ export interface PlusManual {
   createdAt: Date;
 }
 
+export interface Adelanto {
+  id?: string;
+  cajeroId: string;
+  cajeroNombre: string;
+  fecha: Date;
+  monto: number;
+  concepto: string; // Por qué se da el adelanto (materiales, gastos, etc.)
+  estado: 'pendiente' | 'descontado' | 'pagado'; // Estado del adelanto
+  adminId: string;
+  adminNombre: string;
+  fechaDescuento?: Date; // Cuándo se descontó del pago
+  observaciones?: string;
+  createdAt: Date;
+}
+
 // Clientes
 export const createCliente = async (cliente: Omit<Cliente, 'id' | 'createdAt'>) => {
   try {
@@ -454,13 +469,26 @@ export const createPlusManual = async (plus: Omit<PlusManual, 'id' | 'createdAt'
   }
 };
 
-export const getPlusManuales = async (cajeroId?: string, fecha?: Date): Promise<PlusManual[]> => {
+export const getPlusManuales = async (cajeroId?: string, fecha?: Date, fechaFin?: Date): Promise<PlusManual[]> => {
   try {
     const collectionRef = collection(db, 'plus_manuales');
     let q;
 
     // Simplificar la consulta para evitar errores de índices
-    if (cajeroId && fecha) {
+    if (cajeroId && fecha && fechaFin) {
+      // Consulta específica por cajero y período
+      const inicioDelPeriodo = new Date(fecha);
+      inicioDelPeriodo.setHours(0, 0, 0, 0);
+      const finDelPeriodo = new Date(fechaFin);
+      finDelPeriodo.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef, 
+        where('cajeroId', '==', cajeroId),
+        where('fecha', '>=', Timestamp.fromDate(inicioDelPeriodo)),
+        where('fecha', '<=', Timestamp.fromDate(finDelPeriodo))
+      );
+    } else if (cajeroId && fecha) {
       // Consulta específica por cajero y fecha
       const inicioDelDia = new Date(fecha);
       inicioDelDia.setHours(0, 0, 0, 0);
@@ -476,6 +504,19 @@ export const getPlusManuales = async (cajeroId?: string, fecha?: Date): Promise<
     } else if (cajeroId) {
       // Solo por cajero
       q = query(collectionRef, where('cajeroId', '==', cajeroId), orderBy('createdAt', 'desc'));
+    } else if (fecha && fechaFin) {
+      // Solo por período - usar orderBy en fecha en lugar de createdAt
+      const inicioDelPeriodo = new Date(fecha);
+      inicioDelPeriodo.setHours(0, 0, 0, 0);
+      const finDelPeriodo = new Date(fechaFin);
+      finDelPeriodo.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef,
+        where('fecha', '>=', Timestamp.fromDate(inicioDelPeriodo)),
+        where('fecha', '<=', Timestamp.fromDate(finDelPeriodo)),
+        orderBy('fecha', 'desc')
+      );
     } else if (fecha) {
       // Solo por fecha - usar orderBy en fecha en lugar de createdAt
       const inicioDelDia = new Date(fecha);
@@ -530,7 +571,14 @@ export const getPlusManuales = async (cajeroId?: string, fecha?: Date): Promise<
         if (cajeroId) {
           results = results.filter(p => p.cajeroId === cajeroId);
         }
-        if (fecha) {
+        if (fecha && fechaFin) {
+          const fechaStr = fecha.toDateString();
+          const fechaFinStr = fechaFin.toDateString();
+          results = results.filter(p => {
+            const plusFecha = p.fecha.toDateString();
+            return plusFecha >= fechaStr && plusFecha <= fechaFinStr;
+          });
+        } else if (fecha) {
           const fechaStr = fecha.toDateString();
           results = results.filter(p => p.fecha.toDateString() === fechaStr);
         }
@@ -549,5 +597,159 @@ export const deletePlusManual = async (id: string) => {
   } catch (error) {
     console.error('Error deleting plus manual:', error);
     throw new Error('Error eliminando plus manual');
+  }
+};
+
+// Adelantos
+export const createAdelanto = async (adelanto: Omit<Adelanto, 'id' | 'createdAt'>) => {
+  try {
+    // Limpiar campos undefined antes de enviar a Firestore
+    const adelantoData: any = {
+      cajeroId: adelanto.cajeroId,
+      cajeroNombre: adelanto.cajeroNombre,
+      fecha: Timestamp.fromDate(adelanto.fecha),
+      monto: adelanto.monto,
+      concepto: adelanto.concepto,
+      estado: adelanto.estado,
+      adminId: adelanto.adminId,
+      adminNombre: adelanto.adminNombre,
+      fechaDescuento: adelanto.fechaDescuento ? Timestamp.fromDate(adelanto.fechaDescuento) : null,
+      createdAt: Timestamp.fromDate(new Date())
+    };
+    
+    // Solo añadir observaciones si no es undefined/null/empty
+    if (adelanto.observaciones && adelanto.observaciones.trim() !== '') {
+      adelantoData.observaciones = adelanto.observaciones;
+    }
+    
+    const docRef = await addDoc(collection(db, 'adelantos'), adelantoData);
+    return docRef.id;
+  } catch (error) {
+    console.error('Error creating adelanto:', error);
+    throw new Error('Error creando adelanto');
+  }
+};
+
+export const getAdelantos = async (cajeroId?: string, fecha?: Date, estado?: string, fechaFin?: Date): Promise<Adelanto[]> => {
+  try {
+    const collectionRef = collection(db, 'adelantos');
+    let q;
+
+    if (cajeroId && fecha && fechaFin) {
+      // Consulta específica por cajero y período
+      const inicioDelPeriodo = new Date(fecha);
+      inicioDelPeriodo.setHours(0, 0, 0, 0);
+      const finDelPeriodo = new Date(fechaFin);
+      finDelPeriodo.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef, 
+        where('cajeroId', '==', cajeroId),
+        where('fecha', '>=', Timestamp.fromDate(inicioDelPeriodo)),
+        where('fecha', '<=', Timestamp.fromDate(finDelPeriodo)),
+        orderBy('fecha', 'desc')
+      );
+    } else if (cajeroId && fecha) {
+      const inicioDelDia = new Date(fecha);
+      inicioDelDia.setHours(0, 0, 0, 0);
+      const finDelDia = new Date(fecha);
+      finDelDia.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef, 
+        where('cajeroId', '==', cajeroId),
+        where('fecha', '>=', Timestamp.fromDate(inicioDelDia)),
+        where('fecha', '<=', Timestamp.fromDate(finDelDia)),
+        orderBy('fecha', 'desc')
+      );
+    } else if (cajeroId && estado) {
+      q = query(
+        collectionRef, 
+        where('cajeroId', '==', cajeroId),
+        where('estado', '==', estado),
+        orderBy('createdAt', 'desc')
+      );
+    } else if (cajeroId) {
+      q = query(collectionRef, where('cajeroId', '==', cajeroId), orderBy('createdAt', 'desc'));
+    } else if (fecha && fechaFin) {
+      // Solo por período
+      const inicioDelPeriodo = new Date(fecha);
+      inicioDelPeriodo.setHours(0, 0, 0, 0);
+      const finDelPeriodo = new Date(fechaFin);
+      finDelPeriodo.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef,
+        where('fecha', '>=', Timestamp.fromDate(inicioDelPeriodo)),
+        where('fecha', '<=', Timestamp.fromDate(finDelPeriodo)),
+        orderBy('fecha', 'desc')
+      );
+    } else if (fecha) {
+      const inicioDelDia = new Date(fecha);
+      inicioDelDia.setHours(0, 0, 0, 0);
+      const finDelDia = new Date(fecha);
+      finDelDia.setHours(23, 59, 59, 999);
+
+      q = query(
+        collectionRef,
+        where('fecha', '>=', Timestamp.fromDate(inicioDelDia)),
+        where('fecha', '<=', Timestamp.fromDate(finDelDia)),
+        orderBy('fecha', 'desc')
+      );
+    } else {
+      q = query(collectionRef, orderBy('createdAt', 'desc'));
+    }
+
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        fecha: data.fecha?.toDate() || new Date(),
+        fechaDescuento: data.fechaDescuento?.toDate() || undefined,
+        createdAt: data.createdAt?.toDate() || new Date()
+      } as Adelanto;
+    });
+  } catch (error) {
+    console.error('Error getting adelantos:', error);
+    throw new Error('Error obteniendo adelantos');
+  }
+};
+
+export const updateAdelanto = async (id: string, adelanto: Partial<Adelanto>) => {
+  try {
+    // Limpiar campos undefined antes de enviar a Firestore
+    const updateData: any = {};
+    
+    // Solo incluir campos que no sean undefined
+    if (adelanto.cajeroId !== undefined) updateData.cajeroId = adelanto.cajeroId;
+    if (adelanto.cajeroNombre !== undefined) updateData.cajeroNombre = adelanto.cajeroNombre;
+    if (adelanto.fecha !== undefined) updateData.fecha = Timestamp.fromDate(adelanto.fecha);
+    if (adelanto.monto !== undefined) updateData.monto = adelanto.monto;
+    if (adelanto.concepto !== undefined) updateData.concepto = adelanto.concepto;
+    if (adelanto.estado !== undefined) updateData.estado = adelanto.estado;
+    if (adelanto.adminId !== undefined) updateData.adminId = adelanto.adminId;
+    if (adelanto.adminNombre !== undefined) updateData.adminNombre = adelanto.adminNombre;
+    if (adelanto.fechaDescuento !== undefined) {
+      updateData.fechaDescuento = adelanto.fechaDescuento ? Timestamp.fromDate(adelanto.fechaDescuento) : null;
+    }
+    if (adelanto.observaciones !== undefined && adelanto.observaciones.trim() !== '') {
+      updateData.observaciones = adelanto.observaciones;
+    }
+    
+    await updateDoc(doc(db, 'adelantos', id), updateData);
+  } catch (error) {
+    console.error('Error updating adelanto:', error);
+    throw new Error('Error actualizando adelanto');
+  }
+};
+
+export const deleteAdelanto = async (id: string) => {
+  try {
+    await deleteDoc(doc(db, 'adelantos', id));
+  } catch (error) {
+    console.error('Error deleting adelanto:', error);
+    throw new Error('Error eliminando adelanto');
   }
 };
