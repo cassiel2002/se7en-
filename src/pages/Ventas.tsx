@@ -8,7 +8,6 @@ import {
   DollarSign, 
   Calendar,
   User,
-  Scissors,
   Filter,
   CreditCard, // For DNI icon
   Trash2,
@@ -32,6 +31,7 @@ import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ButtonLoading } from '../components/GlobalLoading';
 import { useLocation } from 'react-router-dom';
+import { getFriendlyErrorMessage } from '../utils/firebaseErrors';
 
 interface VentaFormData {
   clienteId: string;
@@ -86,7 +86,7 @@ export const Ventas: React.FC = () => {
   useEffect(() => {
     const prefilledData = location.state?.prefilledData;
     if (prefilledData) {
-      const { cliente, servicio, turnoId } = prefilledData;
+      const { cliente, servicio } = prefilledData;
       
       // Pre-llenar formulario
       setSelectedClient(cliente);
@@ -149,14 +149,9 @@ export const Ventas: React.FC = () => {
       setClientes(clientesData);
       setServicios(serviciosData);
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando datos');
     }
-  };
-
-  const handlePeriodoChange = (nuevoPeriodo: string) => {
-    setPeriodoFiltro(nuevoPeriodo);
-    // Recargar datos con el nuevo período
-    loadData();
   };
 
   const loadMoreVentas = async () => {
@@ -187,6 +182,7 @@ export const Ventas: React.FC = () => {
         setHasMoreVentas(false);
       }
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando más ventas');
     } finally {
       setLoadingMore(false);
@@ -272,7 +268,14 @@ export const Ventas: React.FC = () => {
       loadData(); // Recargar datos
     } catch (error) {
       console.error('Error creating venta:', error);
-      toast.error('Error al registrar la venta');
+      const code = (error as { code?: string })?.code;
+      if (code === 'permission-denied') {
+        // Lo más probable: el precio del servicio cambió y el formulario tenía el anterior.
+        toast.error('La venta fue rechazada: el precio del servicio cambió. Se actualizaron los precios; volvé a intentar.');
+        loadData();
+      } else {
+        toast.error(getFriendlyErrorMessage(error));
+      }
     } finally {
       setIsSubmitting(false);
     }

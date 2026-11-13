@@ -47,6 +47,5 @@ export const fixVisitas = async () => {
 // Ejecutar si se llama directamente
 if (typeof window !== 'undefined') {
   // Solo en el navegador
-  (window as any).initDevData = initDevData;
-  (window as any).fixVisitas = fixVisitas;
+  Object.assign(window, { initDevData, fixVisitas });
 }

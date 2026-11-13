@@ -5,12 +5,11 @@ import {
   DollarSign, 
   Calendar, 
   TrendingUp,
-  Scissors,
-  Clock
+  Scissors
 } from 'lucide-react';
 import { getTurnos, getDashboardData } from '../firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { format, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
 
@@ -42,65 +41,28 @@ export const Dashboard: React.FC = () => {
 
   const loadDashboardData = async () => {
     if (!profile || !user) return;
-    
+
     try {
-      const hoy = new Date();
-      const inicioMes = startOfMonth(hoy);
-      const finMes = endOfMonth(hoy);
-      const inicioHoy = startOfDay(hoy);
-      const finHoy = endOfDay(hoy);
-
-      // Obtener datos
       const cajeroIdFiltro = profile.role === 'admin' ? undefined : user.uid;
+      const [{ estadisticas, clientesTotal }, turnos] = await Promise.all([
+        getDashboardData(cajeroIdFiltro),
+        getTurnos(new Date(), cajeroIdFiltro),
+      ]);
 
-      // Usar datos con cache para dashboard (5 minutos)
-      const dashboardData = await getDashboardData(cajeroIdFiltro);
-      const ventas = dashboardData.ventas;
-      
-      // Solo turnos sin cache (se usa poco)
-      const turnos = await getTurnos(hoy, cajeroIdFiltro);
-
-      // Calcular estadísticas
-      const ventasHoy = ventas
-        .filter(v => v.fecha >= inicioHoy && v.fecha <= finHoy)
-        .reduce((sum, v) => sum + v.precio, 0);
-
-      const ventasMes = ventas
-        .filter(v => v.fecha >= inicioMes && v.fecha <= finMes)
-        .reduce((sum, v) => sum + v.precio, 0);
-
-      // Servicio más vendido
-      const serviciosCount = ventas
-        .filter(v => v.fecha >= inicioMes && v.fecha <= finMes)
-        .reduce((acc, venta) => {
-          acc[venta.servicioNombre] = (acc[venta.servicioNombre] || 0) + 1;
-          return acc;
-        }, {} as Record<string, number>);
-
-      const servicioMasVendido = Object.entries(serviciosCount)
-        .sort(([,a], [,b]) => b - a)[0]?.[0] || '-';
-
-      // Cajero top (solo para admin)
-      let cajeroTop = '-';
-      if (profile?.role === 'admin') {
-        const cajerosVentas = ventas
-          .filter(v => v.fecha >= inicioMes && v.fecha <= finMes)
-          .reduce((acc, venta) => {
-            acc[venta.cajeroNombre] = (acc[venta.cajeroNombre] || 0) + venta.precio;
-            return acc;
-          }, {} as Record<string, number>);
-
-        cajeroTop = Object.entries(cajerosVentas)
-          .sort(([,a], [,b]) => b - a)[0]?.[0] || '-';
-      }
+      const servicioMasVendido =
+        Object.values(estadisticas.mes.porServicio).sort((a, b) => b.cantidad - a.cantidad)[0]?.nombre || '-';
+      const cajeroTop =
+        profile.role === 'admin'
+          ? Object.values(estadisticas.mes.porCajero).sort((a, b) => b.total - a.total)[0]?.nombre || '-'
+          : '-';
 
       setStats({
-        ventasHoy,
-        ventasMes,
-        clientesTotal: dashboardData.clientesTotal,
-        turnosHoy: turnos.filter(t => t.estado === 'pendiente').length,
+        ventasHoy: estadisticas.hoy.total,
+        ventasMes: estadisticas.mes.total,
+        clientesTotal,
+        turnosHoy: turnos.filter((t) => t.estado === 'pendiente').length,
         servicioMasVendido,
-        cajeroTop
+        cajeroTop,
       });
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -115,28 +77,28 @@ export const Dashboard: React.FC = () => {
       value: `$${stats.ventasHoy.toLocaleString()}`,
       icon: DollarSign,
       color: 'bg-green-600',
-      change: '+12%'
+      detalle: format(new Date(), "d 'de' MMMM", { locale: es })
     },
     {
       title: 'Ventas del Mes',
       value: `$${stats.ventasMes.toLocaleString()}`,
       icon: TrendingUp,
       color: 'bg-blue-600',
-      change: '+8%'
+      detalle: format(new Date(), 'MMMM yyyy', { locale: es })
     },
     {
       title: 'Total Clientes',
       value: stats.clientesTotal.toString(),
       icon: Users,
       color: 'bg-purple-600',
-      change: '+5%'
+      detalle: 'Registrados'
     },
     {
       title: 'Turnos Hoy',
       value: stats.turnosHoy.toString(),
       icon: Calendar,
       color: 'bg-orange-600',
-      change: `${stats.turnosHoy} pendientes`
+      detalle: 'Pendientes'
     }
   ];
 
@@ -176,7 +138,7 @@ export const Dashboard: React.FC = () => {
               <div className="flex-1 min-w-0">
                 <p className="text-gray-400 text-xs sm:text-sm truncate">{card.title}</p>
                 <p className="text-xl sm:text-2xl font-bold text-white mt-1 truncate">{card.value}</p>
-                <p className="text-green-500 text-xs sm:text-sm mt-1 truncate">{card.change}</p>
+                <p className="text-gray-500 text-xs sm:text-sm mt-1 truncate first-letter:uppercase">{card.detalle}</p>
               </div>
               <div className={`${card.color} p-2 sm:p-3 rounded-lg flex-shrink-0 ml-4`}>
                 <card.icon className="text-white" size={20} />

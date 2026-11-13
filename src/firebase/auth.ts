@@ -45,9 +45,5 @@ export const loginUser = async (email: string, password: string) => {
 };
 
 export const logoutUser = async () => {
-  try {
-    await signOut(auth);
-  } catch (error: any) {
-    throw new Error(error.message);
-  }
+  await signOut(auth);
 };

@@ -64,6 +64,7 @@ export const Premios: React.FC = () => {
       setPremios(premiosData);
       setHasMorePremios(premiosData.length === 20); // Si trajo 20, puede haber más
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando premios');
     } finally {
       setLoading(false);
@@ -83,6 +84,7 @@ export const Premios: React.FC = () => {
         setHasMorePremios(false);
       }
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando más premios');
     } finally {
       setLoadingMore(false);
@@ -160,6 +162,7 @@ export const Premios: React.FC = () => {
       toast.success('Premio eliminado correctamente');
       await loadPremios();
     } catch (error) {
+      console.error(error);
       toast.error('Error eliminando premio');
     } finally {
       setDeletingId(null);

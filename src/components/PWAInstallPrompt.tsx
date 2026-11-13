@@ -15,7 +15,7 @@ export const PWAInstallPrompt: React.FC = () => {
   useEffect(() => {
     // Verificar si ya está instalada
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-    const isInWebAppiOS = (window.navigator as any).standalone === true;
+    const isInWebAppiOS = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     
     if (isStandalone || isInWebAppiOS) {
       setIsInstalled(true);

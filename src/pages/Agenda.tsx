@@ -6,7 +6,6 @@ import {
   Plus, 
   Clock, 
   User,
-  Scissors,
   CheckCircle,
   XCircle,
   AlertCircle,
@@ -26,9 +25,9 @@ import {
 } from '../firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { format, addDays, startOfDay } from 'date-fns';
+import { getFriendlyErrorMessage } from '../utils/firebaseErrors';
+import { format, addDays } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { useAuthUser } from '../hooks/useAuthUser';
 import { ButtonLoading } from '../components/GlobalLoading';
 import { useNavigate } from 'react-router-dom';
 
@@ -50,7 +49,8 @@ export const Agenda: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [editingTurno, setEditingTurno] = useState<Turno | null>(null);
+  // La edición de turnos aún no está implementada; se conserva el estado para el texto del botón.
+  const [editingTurno] = useState<Turno | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<TurnoFormData>();
@@ -74,6 +74,7 @@ export const Agenda: React.FC = () => {
       setClientes(clientesData);
       setServicios(serviciosData);
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando datos');
     } finally {
       setLoading(false);
@@ -132,9 +133,9 @@ export const Agenda: React.FC = () => {
       reset();
       setShowForm(false);
       loadData();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error en onSubmit turno:', error);
-      toast.error(error.message || 'Error agendando turno');
+      toast.error(getFriendlyErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -146,6 +147,7 @@ export const Agenda: React.FC = () => {
       toast.success(`Turno ${nuevoEstado}`);
       loadData();
     } catch (error) {
+      console.error(error);
       toast.error('Error actualizando turno');
     }
   };

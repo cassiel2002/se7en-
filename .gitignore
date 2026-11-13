@@ -23,3 +23,13 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Claves de cuentas de servicio de Firebase (nunca subirlas)
+*firebase-adminsdk*.json
+service-account*.json
+serviceAccount*.json
+
+# Emuladores de Firebase
+firebase-debug.log
+firestore-debug.log
+.firebase/

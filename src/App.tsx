@@ -179,7 +179,7 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Router>
           <div className="App">
             <AppRoutes />
             <PWAInstallPrompt />

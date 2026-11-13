@@ -157,22 +157,7 @@ export const LoginForm: React.FC = () => {
           </motion.button>
         </form>
 
-        {/* Usuarios */}
         <div className="mt-6 text-center">
-          <div className="bg-gray-800 p-3 rounded-lg border border-gray-700">
-            <div className="space-y-1 text-xs">
-              <div className="bg-gray-900 p-2 rounded border-l-2 border-green-500">
-                <p className="text-green-400 font-medium">👨‍💼 faqu</p>
-              </div>
-              <div className="bg-gray-900 p-2 rounded border-l-2 border-blue-500">
-                <p className="text-blue-400 font-medium">💇‍♂️ martins</p>
-              </div>
-              <div className="bg-gray-900 p-2 rounded border-l-2 border-purple-500">
-                <p className="text-purple-400 font-medium">💇‍♂️ ltalamo</p>
-              </div>
-            </div>
-          </div>
-          
           <p className="text-gray-400 text-xs mt-3">
             ¿Problemas para acceder? Contacta al administrador
           </p>

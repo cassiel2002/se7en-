@@ -11,7 +11,6 @@ import {
   UserPlus,
   LogOut,
   X,
-  Star,
   CreditCard,
   Gift,
   Crown

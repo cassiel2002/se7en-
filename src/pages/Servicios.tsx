@@ -43,6 +43,7 @@ export const Servicios: React.FC = () => {
       const serviciosData = await getServicios();
       setServicios(serviciosData);
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando servicios');
     } finally {
       setLoading(false);
@@ -71,6 +72,7 @@ export const Servicios: React.FC = () => {
       setEditingServicio(null);
       loadServicios();
     } catch (error) {
+      console.error(error);
       toast.error('Error guardando servicio');
     } finally {
       setIsSubmitting(false);

@@ -15,8 +15,9 @@ import {
   Star,
   Gift
 } from 'lucide-react';
-import { Cliente, createCliente, getClientes, getClientesPaginados, updateCliente, deleteCliente, getClientesCount, getPremios, canjearPuntos } from '../firebase/firestore';
+import { Cliente, Premio, createCliente, getClientesPaginados, updateCliente, deleteCliente, getClientesCount, getPremios, canjearPuntos } from '../firebase/firestore';
 import toast from 'react-hot-toast';
+import { getFriendlyErrorMessage } from '../utils/firebaseErrors';
 import { useAuth } from '../context/AuthContext';
 import { ButtonLoading } from '../components/GlobalLoading';
 
@@ -44,7 +45,7 @@ export const Clientes: React.FC = () => {
   // Estados para sistema de canje
   const [showCanjeModal, setShowCanjeModal] = useState(false);
   const [clienteParaCanje, setClienteParaCanje] = useState<Cliente | null>(null);
-  const [premiosDisponibles, setPremiosDisponibles] = useState<any[]>([]);
+  const [premiosDisponibles, setPremiosDisponibles] = useState<Premio[]>([]);
   const [loadingPremios, setLoadingPremios] = useState(false);
   const [canjeando, setCanjeando] = useState(false);
 
@@ -60,6 +61,7 @@ export const Clientes: React.FC = () => {
       const total = await getClientesCount();
       setTotalClientes(total);
     } catch (error) {
+      console.error(error);
       console.error('Error cargando total de clientes');
     }
   };
@@ -91,6 +93,7 @@ export const Clientes: React.FC = () => {
         toast(`${cliente.nombre} tiene ${cliente.puntos} puntos, pero no hay premios disponibles`);
       }
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando premios disponibles');
       setShowCanjeModal(false);
     } finally {
@@ -119,8 +122,8 @@ export const Clientes: React.FC = () => {
       setClienteParaCanje(null);
       setPremiosDisponibles([]);
       
-    } catch (error: any) {
-      toast.error(error.message || 'Error realizando el canje');
+    } catch (error) {
+      toast.error(getFriendlyErrorMessage(error));
     } finally {
       setCanjeando(false);
     }
@@ -139,6 +142,7 @@ export const Clientes: React.FC = () => {
       setClientes(clientesData);
       setHasMoreClientes(clientesData.length === 10); // Si trajo 10, puede haber más
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando clientes');
     } finally {
       setLoading(false);
@@ -156,6 +160,7 @@ export const Clientes: React.FC = () => {
       setClientes([...clientes, ...siguientes.filter((c) => !clientes.some((x) => x.id === c.id))]);
       setHasMoreClientes(siguientes.length === 10);
     } catch (error) {
+      console.error(error);
       toast.error('Error cargando más clientes');
     } finally {
       setLoadingMore(false);
@@ -185,7 +190,7 @@ export const Clientes: React.FC = () => {
       setEditingCliente(null);
       loadClientes();
     } catch (error) {
-      toast.error('Error guardando cliente');
+      toast.error(getFriendlyErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -467,6 +472,8 @@ export const Clientes: React.FC = () => {
                 
                 <button
                   onClick={() => handleEdit(cliente)}
+                  aria-label={`Editar ${cliente.nombre}`}
+                  title="Editar cliente"
                   className="text-blue-400 hover:text-blue-300 transition-colors"
                 >
                   <Edit size={16} />
@@ -475,6 +482,8 @@ export const Clientes: React.FC = () => {
                   <button
                     onClick={() => cliente.id && handleDeleteCliente(cliente.id)}
                     disabled={deletingId === cliente.id}
+                    aria-label={`Eliminar ${cliente.nombre}`}
+                    title="Eliminar cliente"
                     className="text-red-400 hover:text-red-300 transition-colors disabled:opacity-50"
                   >
                     {deletingId === cliente.id ? (
@@ -633,7 +642,7 @@ export const Clientes: React.FC = () => {
                     )}
                     
                     <button
-                      onClick={() => handleCanjearPremio(premio.id)}
+                      onClick={() => premio.id && handleCanjearPremio(premio.id)}
                       disabled={canjeando}
                       className="w-full bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                     >

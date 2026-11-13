@@ -1,92 +1,200 @@
 rules_version = '2';
 
+// Reglas de seguridad de Firestore — Se7en Barbershop v4.0
+//
+// Principios:
+// - El admin puede todo (salvo lo indicado).
+// - El cajero solo lee y registra lo propio, y no puede alterar puntos ni
+//   totales salvo como consecuencia de una venta o un canje real, que las reglas
+//   verifican leyendo el documento creado en el mismo batch/transacción.
+// - El rol se toma del token (custom claim `role`, ver tools/README.md) y, si el
+//   token todavía no lo tiene, del documento users/{uid}.
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ============ HELPER FUNCTIONS ============
-    
-    // Verificar si el usuario está autenticado
+
+    // ============ FUNCIONES AUXILIARES ============
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
-    // Rol del usuario autenticado (1 lectura por petición; Firestore la reutiliza
-    // dentro de la misma evaluación).
+
+    function userDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // Rol: primero el custom claim (no cuesta lecturas); si no está, el perfil.
     function userRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return request.auth.token.get('role', '') != ''
+        ? request.auth.token.role
+        : get(userDoc()).data.role;
     }
 
-    function hasProfile() {
+    function hasRole() {
       return isAuthenticated() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid));
+             (request.auth.token.get('role', '') != '' || exists(userDoc()));
     }
 
-    // Verificar si el usuario es admin
     function isAdmin() {
-      return hasProfile() && userRole() == 'admin';
+      return hasRole() && userRole() == 'admin';
     }
-    
-    // Verificar si el usuario es cajero o admin
+
     function isCajeroOrAdmin() {
-      return hasProfile() && userRole() in ['admin', 'cashier', 'cajero'];
+      return hasRole() && userRole() in ['admin', 'cashier', 'cajero'];
     }
 
-    // El documento leído pertenece al usuario (campo cajeroId)
-    function isOwnRecord() {
-      return resource.data.cajeroId == request.auth.uid;
-    }
-
-    // El documento que se crea queda a nombre del usuario (no de otro cajero)
-    function createsOwnRecord() {
-      return request.resource.data.cajeroId == request.auth.uid;
-    }
-
-    // Verificar si es el propio usuario
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // ============ REGLAS DE ACCESO ============
+    // El documento existente pertenece al usuario (campo cajeroId).
+    function isOwnRecord() {
+      return resource.data.cajeroId == request.auth.uid;
+    }
 
-    // USUARIOS - Solo admin puede crear/editar usuarios, usuarios pueden leer su propio perfil
+    // El documento nuevo queda a nombre del usuario (no de otro cajero).
+    function createsOwnRecord() {
+      return request.resource.data.cajeroId == request.auth.uid;
+    }
+
+    function docPath(coleccion, id) {
+      return /databases/$(database)/documents/$(coleccion)/$(id);
+    }
+
+    // El documento se crea en esta misma escritura (batch/transacción).
+    function seCreaAhora(coleccion, id) {
+      return id is string && id != '' &&
+             !exists(docPath(coleccion, id)) &&
+             existsAfter(docPath(coleccion, id));
+    }
+
+    function camposModificados() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ============ USUARIOS ============
+
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow read: if isAdmin() || isOwner(userId);
       allow create, update, delete: if isAdmin();
     }
 
-    // CLIENTES - Admin y cajeros pueden leer y escribir
+    // ============ CLIENTES ============
+
+    // Alta por cajero: sin puntos ni visitas iniciales.
+    function clienteNuevoValido() {
+      let d = request.resource.data;
+      return d.get('puntos', 0) == 0 &&
+             d.get('puntosCanjeados', 0) == 0 &&
+             d.get('visitas', 0) == 0;
+    }
+
+    // Edición de datos de contacto.
+    function edicionDatosCliente() {
+      return camposModificados().hasOnly(['nombre', 'telefono', 'email', 'dni', 'updatedAt']);
+    }
+
+    // +1 visita y +1 punto, solo junto con la venta que lo origina.
+    function sumaPorVenta(clienteId) {
+      let ventaId = request.resource.data.get('ultimaVentaId', '');
+      let venta = getAfter(docPath('ventas', ventaId)).data;
+      return camposModificados().hasOnly(['visitas', 'puntos', 'ultimaVisita', 'ultimaVentaId', 'updatedAt']) &&
+             seCreaAhora('ventas', ventaId) &&
+             venta.clienteId == clienteId &&
+             venta.cajeroId == request.auth.uid &&
+             request.resource.data.puntos == resource.data.get('puntos', 0) + 1 &&
+             request.resource.data.visitas == resource.data.get('visitas', 0) + 1;
+    }
+
+    // Resta de puntos, solo junto con el canje que la origina y por el valor del premio.
+    function restaPorCanje(clienteId) {
+      let canjeId = request.resource.data.get('ultimoCanjeId', '');
+      let canje = getAfter(docPath('canjes_puntos', canjeId)).data;
+      let premio = get(docPath('premios', canje.premioId)).data;
+      return camposModificados().hasOnly(['puntos', 'puntosCanjeados', 'ultimoCanjeId', 'updatedAt']) &&
+             seCreaAhora('canjes_puntos', canjeId) &&
+             canje.clienteId == clienteId &&
+             canje.cajeroId == request.auth.uid &&
+             premio.activo == true &&
+             canje.puntosUtilizados == premio.puntosRequeridos &&
+             request.resource.data.puntos == resource.data.get('puntos', 0) - premio.puntosRequeridos &&
+             request.resource.data.puntos >= 0 &&
+             request.resource.data.puntosCanjeados == resource.data.get('puntosCanjeados', 0) + premio.puntosRequeridos;
+    }
+
     match /clientes/{clienteId} {
-      allow read, create, update: if isCajeroOrAdmin();
+      allow read: if isCajeroOrAdmin();
+      allow create: if isAdmin() || (isCajeroOrAdmin() && clienteNuevoValido());
+      allow update: if isAdmin() ||
+                    (isCajeroOrAdmin() &&
+                      (edicionDatosCliente() || sumaPorVenta(clienteId) || restaPorCanje(clienteId)));
       allow delete: if isAdmin();
     }
 
-    // SERVICIOS - Admin y cajeros pueden leer, solo admin puede escribir
+    // ============ SERVICIOS ============
+
     match /servicios/{servicioId} {
       allow read: if isCajeroOrAdmin();
       allow create, update, delete: if isAdmin();
     }
 
-    // VENTAS - Admin ve todas; el cajero solo las propias.
-    // Todos registran ventas solo a su nombre.
+    // ============ VENTAS ============
+
+    // Venta registrada por un cajero: a su nombre, con la hora del servidor y con
+    // el precio vigente del servicio.
+    function ventaDeCajeroValida() {
+      let v = request.resource.data;
+      return createsOwnRecord() &&
+             v.createdAt == request.time &&
+             v.precio is number &&
+             v.precio == get(docPath('servicios', v.servicioId)).data.precio &&
+             v.keys().hasOnly(['clienteId', 'clienteNombre', 'servicioId', 'servicioNombre', 'precio',
+                               'metodoPago', 'fecha', 'cajeroId', 'cajeroNombre', 'cajeroEmail', 'createdAt']);
+    }
+
     match /ventas/{ventaId} {
       allow read: if isAdmin() || (isCajeroOrAdmin() && isOwnRecord());
-      allow create: if isCajeroOrAdmin() && createsOwnRecord();
+      allow create: if isAdmin() ? createsOwnRecord() : (isCajeroOrAdmin() && ventaDeCajeroValida());
       allow update, delete: if isAdmin();
     }
 
-    // TURNOS/AGENDA - Admin y cajeros pueden gestionar turnos
+    // ============ RESÚMENES DIARIOS DE VENTAS ============
+
+    // El cajero solo puede sumar su propia venta recién creada al resumen del día.
+    function sumaResumenValida() {
+      let ventaId = request.resource.data.get('ultimaVentaId', '');
+      let venta = getAfter(docPath('ventas', ventaId)).data;
+      let antes = resource == null ? { 'total': 0, 'cantidad': 0, 'porCajero': {} } : resource.data;
+      let cajeros = request.resource.data.porCajero;
+      return request.resource.data.keys().hasOnly(['fecha', 'total', 'cantidad', 'porCajero', 'porServicio', 'ultimaVentaId', 'updatedAt']) &&
+             seCreaAhora('ventas', ventaId) &&
+             venta.cajeroId == request.auth.uid &&
+             request.resource.data.total == antes.total + venta.precio &&
+             request.resource.data.cantidad == antes.cantidad + 1 &&
+             // Solo cambia la entrada del propio cajero.
+             cajeros.diff(antes.porCajero).affectedKeys().hasOnly([request.auth.uid]);
+    }
+
+    match /resumenes_ventas/{fecha} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() || (isCajeroOrAdmin() && sumaResumenValida());
+      allow delete: if isAdmin();
+    }
+
+    // ============ TURNOS / AGENDA ============
+
     match /turnos/{turnoId} {
       allow read, create, update: if isCajeroOrAdmin();
       allow delete: if isAdmin();
     }
 
-    // PLUS MANUALES - Solo admin puede crear/eliminar, todos pueden leer
+    // ============ PERSONAL ============
+
     match /plus_manuales/{plusId} {
       allow read: if isCajeroOrAdmin();
       allow create, update, delete: if isAdmin();
     }
 
-    // ADELANTOS - Admin puede todo, cajeros pueden crear y leer
+    // Adelantos: el admin ve y gestiona todos; el cajero solo los propios.
     match /adelantos/{adelantoId} {
       allow read: if isAdmin() || (isCajeroOrAdmin() && isOwnRecord());
       allow create: if isAdmin() || (isCajeroOrAdmin() && createsOwnRecord());
@@ -95,20 +203,18 @@ service cloud.firestore {
 
     // ============ SISTEMA DE PUNTOS ============
 
-    // PREMIOS - Admin puede gestionar, cajeros pueden leer
     match /premios/{premioId} {
       allow read: if isCajeroOrAdmin();
       allow create, update, delete: if isAdmin();
     }
 
-    // CANJES DE PUNTOS - Admin y cajeros pueden crear y leer
     match /canjes_puntos/{canjeId} {
       allow read: if isCajeroOrAdmin();
-      allow create: if isCajeroOrAdmin() && createsOwnRecord();
+      allow create: if isCajeroOrAdmin() && createsOwnRecord() &&
+                    request.resource.data.estado == 'canjeado';
       allow update, delete: if isAdmin();
     }
 
-    // MOVIMIENTOS DE PUNTOS - Admin y cajeros pueden crear y leer
     match /movimientos_puntos/{movimientoId} {
       allow read: if isCajeroOrAdmin();
       allow create: if isCajeroOrAdmin() && createsOwnRecord();
@@ -117,23 +223,20 @@ service cloud.firestore {
 
     // ============ CONFIGURACIÓN Y LOGS ============
 
-    // CONFIGURACIÓN DEL SISTEMA - Solo admin
     match /config/{configId} {
       allow read, write: if isAdmin();
     }
 
-    // LOGS/AUDITORÍA - Solo lectura para admin
     match /logs/{logId} {
       allow read: if isAdmin();
-      allow create: if isAuthenticated(); // Permitir crear logs para auditoría
-      allow update, delete: if false; // Los logs no se modifican
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
     }
 
-    // ============ REGLA CATCH-ALL ============
-    
-    // Denegar acceso a cualquier otra colección no especificada
+    // ============ RESTO: DENEGADO ============
+
     match /{document=**} {
       allow read, write: if false;
     }
   }
-} 
+}

@@ -7,15 +7,15 @@ export const cleanDuplicatePremios = async () => {
     console.log('🧹 Limpiando premios duplicados...');
     
     const querySnapshot = await getDocs(collection(db, 'premios'));
-    const premios: any[] = [];
-    const premiosMap = new Map();
+    const premios: { id: string; nombre: string; createdAt: Date }[] = [];
+    const premiosMap = new Map<string, typeof premios>();
     
     // Recopilar todos los premios
     querySnapshot.docs.forEach(doc => {
       const data = doc.data();
       const premio = {
         id: doc.id,
-        ...data,
+        nombre: String(data.nombre || ''),
         createdAt: data.createdAt?.toDate() || new Date()
       };
       premios.push(premio);
@@ -29,7 +29,7 @@ export const cleanDuplicatePremios = async () => {
       if (!premiosMap.has(key)) {
         premiosMap.set(key, []);
       }
-      premiosMap.get(key).push(premio);
+      premiosMap.get(key)!.push(premio);
     });
     
     // Eliminar duplicados (mantener el más reciente)
@@ -39,7 +39,7 @@ export const cleanDuplicatePremios = async () => {
         console.log(`🔍 Encontrados ${premiosGrupo.length} duplicados para: ${nombre}`);
         
         // Ordenar por fecha de creación (más reciente primero)
-        premiosGrupo.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
+        premiosGrupo.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
         
         // Eliminar todos excepto el primero (más reciente)
         for (let i = 1; i < premiosGrupo.length; i++) {
@@ -88,6 +88,5 @@ export const deleteAllPremios = async () => {
 
 // Hacer disponible en la consola del navegador
 if (typeof window !== 'undefined') {
-  (window as any).cleanDuplicatePremios = cleanDuplicatePremios;
-  (window as any).deleteAllPremios = deleteAllPremios;
+  Object.assign(window, { cleanDuplicatePremios, deleteAllPremios });
 }

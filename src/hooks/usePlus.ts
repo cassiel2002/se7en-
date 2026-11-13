@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getPlusManuales, createPlusManual, deletePlusManual, PlusManual } from '../firebase/firestore';
 import { UserProfile } from '../firebase/auth';
-import { differenceInDays, eachDayOfInterval, isSunday } from 'date-fns';
+import { eachDayOfInterval, isSunday } from 'date-fns';
 
 export interface PlusData {
   cajeroId: string;

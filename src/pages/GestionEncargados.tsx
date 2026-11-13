@@ -36,7 +36,7 @@ export const GestionEncargados: React.FC = () => {
       setCajeros(cajerosData);
 
       // Inicializar configuración local
-      const initialConfig: Record<string, any> = {};
+      const initialConfig: typeof configEncargados = {};
       cajerosData.forEach(cajero => {
         initialConfig[cajero.uid] = {
           isEncargado: cajero.isEncargado || false,
@@ -93,7 +93,7 @@ export const GestionEncargados: React.FC = () => {
   };
 
   // Actualizar configuración local
-  const updateConfig = (cajeroId: string, field: keyof typeof configEncargados[string], value: any) => {
+  const updateConfig = (cajeroId: string, field: keyof typeof configEncargados[string], value: boolean | number) => {
     setConfigEncargados(prev => ({
       ...prev,
       [cajeroId]: {

@@ -17,7 +17,7 @@ import { UserProfile } from '../firebase/auth';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
-import { deleteCajeroProfile, getVentasMesActual, Venta } from '../firebase/firestore';
+import { deleteCajeroProfile, getEstadisticasMes } from '../firebase/firestore';
 import toast from 'react-hot-toast';
 
 interface RendimientoCajero {
@@ -31,7 +31,6 @@ interface RendimientoCajero {
 export const Cajeros: React.FC = () => {
   const [cajeros, setCajeros] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [rendimiento, setRendimiento] = useState<RendimientoCajero[]>([]);
   const [loadingRendimiento, setLoadingRendimiento] = useState(false);
   const { profile } = useAuth();
@@ -65,39 +64,24 @@ export const Cajeros: React.FC = () => {
   const loadRendimiento = async () => {
     setLoadingRendimiento(true);
     try {
-      // Reutiliza el cache de ventas del mes del dashboard (no relee todo el mes).
-      const ventas = await getVentasMesActual();
-      console.log('📈 Ventas del mes:', ventas);
-      
-      // Agrupar ventas por cajero
+      // Totales del mes desde los resúmenes diarios (no lee venta por venta).
+      const { mes } = await getEstadisticasMes();
       const rendimientoPorCajero: { [cajeroId: string]: RendimientoCajero } = {};
-      
-      ventas.forEach(venta => {
-        if (!rendimientoPorCajero[venta.cajeroId]) {
-          rendimientoPorCajero[venta.cajeroId] = {
-            cajeroId: venta.cajeroId,
-            cajeroNombre: venta.cajeroNombre,
-            servicios: {},
-            totalServicios: 0,
-            totalVentas: 0
-          };
+      for (const [cajeroId, totales] of Object.entries(mes.porCajero)) {
+        const servicios: { [servicio: string]: number } = {};
+        for (const s of Object.values(totales.servicios)) {
+          servicios[s.nombre] = (servicios[s.nombre] || 0) + s.cantidad;
         }
-        
-        const rendimientoCajero = rendimientoPorCajero[venta.cajeroId];
-        
-        // Contar servicios por tipo
-        if (!rendimientoCajero.servicios[venta.servicioNombre]) {
-          rendimientoCajero.servicios[venta.servicioNombre] = 0;
-        }
-        rendimientoCajero.servicios[venta.servicioNombre]++;
-        
-        // Incrementar totales
-        rendimientoCajero.totalServicios++;
-        rendimientoCajero.totalVentas += venta.precio;
-      });
-      
+        rendimientoPorCajero[cajeroId] = {
+          cajeroId,
+          cajeroNombre: totales.nombre,
+          servicios,
+          totalServicios: totales.cantidad,
+          totalVentas: totales.total,
+        };
+      }
+
       const rendimientoArray = Object.values(rendimientoPorCajero);
-      console.log('📊 Rendimiento calculado:', rendimientoArray);
       
       setRendimiento(rendimientoArray);
     } catch (error) {

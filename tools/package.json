@@ -1,0 +1,14 @@
+{
+  "name": "se7en-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Scripts de administración que se ejecutan desde la PC del administrador (no se suben al hosting).",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "sync-roles": "node sync-roles.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.1"
+  }
+}

@@ -41,5 +41,12 @@ export const getFriendlyErrorMessage = (error: unknown): string => {
     return 'Demasiados intentos fallidos desde este dispositivo. Esperá unos minutos e intentá de nuevo.';
   }
 
-  return message ? `Ocurrió un error: ${message}` : 'Ocurrió un error inesperado. Intentá de nuevo.';
+  return message || 'Ocurrió un error inesperado. Intentá de nuevo.';
 };
+
+/**
+ * Crea un Error con mensaje propio pero conservando el `code` del error original,
+ * para que getFriendlyErrorMessage pueda explicar la causa real.
+ */
+export const errorConCodigo = (mensaje: string, causa: unknown): Error & { code?: string } =>
+  Object.assign(new Error(mensaje), { code: getCode(causa) || undefined, cause: causa });

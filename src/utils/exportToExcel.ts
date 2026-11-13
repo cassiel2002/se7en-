@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { crearLibro, agregarHoja, descargarLibro, Celda } from './excelWriter';
 import { Venta } from '../firebase/firestore';
 import { format, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -27,7 +27,7 @@ const formatMetodoPago = (metodoPago: string | undefined): string => {
   return metodoPago === 'efectivo' ? 'Efectivo' : 'Transferencia';
 };
 
-export const exportVentasToExcel = (
+export const exportVentasToExcel = async (
   ventasPorCajero: VentasPorCajero[],
   fechaInicio: Date,
   fechaFin: Date,
@@ -48,7 +48,7 @@ export const exportVentasToExcel = (
     }))
   });
 
-  const wb = XLSX.utils.book_new();
+  const wb = crearLibro();
   
   // Título y período
   const esMismoDia = isSameDay(fechaInicio, fechaFin);
@@ -69,7 +69,7 @@ export const exportVentasToExcel = (
   const cajeros = ventasPorCajero.filter(c => !c.cajeroNombre.toLowerCase().includes('admin'));
 
   // ==================== HOJA 1: RESUMEN EJECUTIVO ====================
-  const resumenData: string[][] = [
+  const resumenData: Celda[][] = [
     [`${titulo} - BARBERÍA SE7EN`],
     [`Período: ${formatoFecha}`],
     [''],
@@ -118,9 +118,8 @@ export const exportVentasToExcel = (
     ]);
   });
 
-  const wsResumen = XLSX.utils.aoa_to_sheet(resumenData);
-  wsResumen['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 15 }];
-  XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen Ejecutivo');
+  const wsResumenAnchos = [{ wch: 25 }, { wch: 15 }, { wch: 15 }];
+  agregarHoja(wb, 'Resumen Ejecutivo', resumenData, wsResumenAnchos.map((c) => c.wch));
 
   // ==================== HOJA 2: PAGOS A CAJEROS ====================
   // Verificar si hay plus o adelantos para decidir estructura
@@ -129,7 +128,7 @@ export const exportVentasToExcel = (
   const hayAlgunPlus = hayPlusAutomatico || hayPlusManual;
   const hayAdelantos = cajeros.some(c => (c.adelantosPendientes || 0) > 0);
 
-  const pagosData: string[][] = [
+  const pagosData: Celda[][] = [
     [`💵 PAGOS A CAJEROS - ${formatoFecha}`],
     [''],
     ['Sistema: Cajeros reciben 50% + Plus - Adelantos Pendientes'],
@@ -217,15 +216,14 @@ export const exportVentasToExcel = (
     });
   }
 
-  const wsPagos = XLSX.utils.aoa_to_sheet(pagosData);
   // Ajustar ancho de columnas dinámicamente según columnas presentes
   const columns = [{ wch: 20 }, { wch: 15 }, { wch: 15 }]; // Cajero, Facturado, Comisión
   if (hayAlgunPlus) columns.push({ wch: 15 }); // Plus
   if (hayAdelantos) columns.push({ wch: 15 }); // Adelantos
   columns.push({ wch: 18 }); // Pago Total
   
-  wsPagos['!cols'] = columns;
-  XLSX.utils.book_append_sheet(wb, wsPagos, 'Pagos a Cajeros');
+  const wsPagosAnchos = columns;
+  agregarHoja(wb, 'Pagos a Cajeros', pagosData, wsPagosAnchos.map((c) => c.wch));
 
   // ==================== HOJA 3: DETALLE DE VENTAS ====================
   const ventasData = [
@@ -245,8 +243,7 @@ export const exportVentasToExcel = (
       ])
   ];
 
-  const wsVentas = XLSX.utils.aoa_to_sheet(ventasData);
-  wsVentas['!cols'] = [
+  const wsVentasAnchos = [
     { wch: 18 }, // Fecha
     { wch: 18 }, // Cajero
     { wch: 20 }, // Cliente
@@ -254,13 +251,13 @@ export const exportVentasToExcel = (
     { wch: 12 }, // Precio
     { wch: 15 }  // Método
   ];
-  XLSX.utils.book_append_sheet(wb, wsVentas, 'Detalle de Ventas');
+  agregarHoja(wb, 'Detalle de Ventas', ventasData, wsVentasAnchos.map((c) => c.wch));
 
   // ==================== HOJA 4: ANÁLISIS POR MÉTODO DE PAGO ====================
   const efectivo = todasLasVentas.filter(v => formatMetodoPago(v.metodoPago) === 'Efectivo');
   const transferencia = todasLasVentas.filter(v => formatMetodoPago(v.metodoPago) === 'Transferencia');
   
-  const metodoPagoData: string[][] = [
+  const metodoPagoData: Celda[][] = [
     [`💳 ANÁLISIS POR MÉTODO DE PAGO - ${formatoFecha}`],
     [''],
     ['RESUMEN GENERAL'],
@@ -285,15 +282,14 @@ export const exportVentasToExcel = (
     ]);
   });
 
-  const wsMetodoPago = XLSX.utils.aoa_to_sheet(metodoPagoData);
-  wsMetodoPago['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
-  XLSX.utils.book_append_sheet(wb, wsMetodoPago, 'Métodos de Pago');
+  const wsMetodoPagoAnchos = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 15 }];
+  agregarHoja(wb, 'Métodos de Pago', metodoPagoData, wsMetodoPagoAnchos.map((c) => c.wch));
 
   // ==================== HOJAS INDIVIDUALES POR CAJERO ====================
   ventasPorCajero.forEach(cajero => {
     if (cajero.ventas.length === 0) return;
 
-    const cajeroData: string[][] = [
+    const cajeroData: Celda[][] = [
       [`👤 ${cajero.cajeroNombre.toUpperCase()}`],
       [`Período: ${formatoFecha}`],
       [''],
@@ -341,8 +337,7 @@ export const exportVentasToExcel = (
         ]);
       });
 
-    const wsCajero = XLSX.utils.aoa_to_sheet(cajeroData);
-    wsCajero['!cols'] = [
+      const wsCajeroAnchos = [
       { wch: 18 }, // Fecha
       { wch: 20 }, // Cliente
       { wch: 25 }, // Servicio
@@ -352,10 +347,10 @@ export const exportVentasToExcel = (
 
     // Limpiar nombre para usar como nombre de hoja
     const nombreHoja = cajero.cajeroNombre.replace(/[^\w\s]/gi, '').substring(0, 31);
-    XLSX.utils.book_append_sheet(wb, wsCajero, nombreHoja);
+    agregarHoja(wb, nombreHoja, cajeroData, wsCajeroAnchos.map((c) => c.wch));
   });
 
   // Descargar archivo
   const nombreArchivo = `Se7en_${titulo.replace(/\s+/g, '_')}_${format(fechaInicio, 'dd-MM-yyyy', { locale: es })}.xlsx`;
-  XLSX.writeFile(wb, nombreArchivo);
+  await descargarLibro(wb, nombreArchivo);
 };

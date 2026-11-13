@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { 
   BarChart3, 
   Download, 
-  Calendar,
   DollarSign,
   TrendingUp,
   Users,
@@ -11,14 +10,14 @@ import {
   Plus,
   Star,
   Trash2,
-  AlertCircle,
   Eye,
   EyeOff,
   CreditCard
 } from 'lucide-react';
-import { getVentas, getClientes } from '../firebase/firestore';
+import { getVentas } from '../firebase/firestore';
 import { getDocs, collection, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { UserProfile } from '../firebase/auth';
 import { exportVentasToExcel, VentasPorCajero, TipoPeriodo } from '../utils/exportToExcel';
 import { useAuth } from '../context/AuthContext';
 import { usePlus } from '../hooks/usePlus';
@@ -33,7 +32,7 @@ export const Reportes: React.FC = () => {
   const [fechaInicio, setFechaInicio] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [fechaFin, setFechaFin] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const [ventasPorCajero, setVentasPorCajero] = useState<VentasPorCajero[]>([]);
-  const [cajeros, setCajeros] = useState<any[]>([]);
+  const [cajeros, setCajeros] = useState<UserProfile[]>([]);
   const [estadisticas, setEstadisticas] = useState({
     totalVentas: 0,
     totalServicios: 0,
@@ -90,18 +89,17 @@ export const Reportes: React.FC = () => {
       // SEGURIDAD: Filtrar por cajero si no es admin
       const cajeroIdFiltro = profile?.role === 'admin' ? undefined : user?.uid;
 
-      const [ventas, clientes, cajerosData] = await Promise.all([
-        getVentas(cajeroIdFiltro, inicio, fin, 1000), // Límite alto para reportes
-        getClientes(), // TODOS los clientes para reportes
+      const [ventas, cajerosData] = await Promise.all([
+        getVentas(cajeroIdFiltro, inicio, fin),
         // Cargar todos los cajeros para el manejo de plus
         getDocs(query(collection(db, 'users'), where('role', 'in', ['cashier', 'cajero', 'admin'])))
       ]);
 
       // Procesar cajeros
       const cajerosArray = cajerosData.docs.map(doc => ({
+        ...doc.data(),
         uid: doc.id,
-        ...doc.data()
-      }));
+      } as UserProfile));
       setCajeros(cajerosArray);
 
       // Filtrar ventas por fecha (doble verificación con logging)
@@ -145,7 +143,7 @@ export const Reportes: React.FC = () => {
         let claveAgrupacion = venta.cajeroId;
         
         // Buscar si ya existe un cajero con nombre similar
-        const cajeroExistente = Object.entries(acc).find(([key, datos]) => {
+        const cajeroExistente = Object.entries(acc).find(([, datos]) => {
           const nombreExistente = datos.cajeroNombre.toLowerCase().trim().replace(/\s+/g, ' ');
           return nombreExistente === nombreNormalizado || 
                  nombreExistente.includes(nombreNormalizado) || 
@@ -242,7 +240,7 @@ export const Reportes: React.FC = () => {
     }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (ventasPorCajero.length === 0) {
       toast.error('No hay datos para exportar');
       return;
@@ -280,7 +278,7 @@ export const Reportes: React.FC = () => {
         };
       });
       
-      exportVentasToExcel(
+      await exportVentasToExcel(
         ventasConPlusYAdelantos,
         inicio,
         fin,
