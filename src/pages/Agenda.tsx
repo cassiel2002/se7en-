@@ -66,7 +66,7 @@ export const Agenda: React.FC = () => {
     try {
       const [turnosData, clientesData, serviciosData] = await Promise.all([
         profile?.role === 'admin' ? getTurnos(selectedDate) : getTurnos(selectedDate, user?.uid),
-        getClientes(),
+        getClientes(), // TODOS los clientes para formularios
         getServiciosActivos()
       ]);
       

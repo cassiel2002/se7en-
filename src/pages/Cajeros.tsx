@@ -71,7 +71,7 @@ export const Cajeros: React.FC = () => {
       console.log('📊 Cargando rendimiento del mes:', { fechaInicio, fechaFin });
       
       // Obtener todas las ventas del mes actual
-      const ventas = await getVentas(undefined, fechaInicio, fechaFin);
+      const ventas = await getVentas(undefined, fechaInicio, fechaFin, 1000); // Límite alto para cálculos
       console.log('📈 Ventas del mes:', ventas);
       
       // Agrupar ventas por cajero

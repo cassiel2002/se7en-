@@ -58,12 +58,26 @@ export const Ventas: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [fromTurno, setFromTurno] = useState<boolean>(false);
   const [showCreateClient, setShowCreateClient] = useState(false); // Estado para mostrar formulario de cliente nuevo
+  const [periodoFiltro, setPeriodoFiltro] = useState('hoy'); // Filtro por período - por defecto "hoy"
+  const [hasMoreVentas, setHasMoreVentas] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const { register, handleSubmit, reset, formState: { errors }, setValue } = useForm<VentaFormData>(); // Destructure setValue
 
   useEffect(() => {
     loadData();
-  }, [profile, user]);
+  }, [profile, user, periodoFiltro]);
+
+  // Efecto para manejar la búsqueda con debounce
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (profile && user) {
+        loadData();
+      }
+    }, 300); // Debounce de 300ms
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
 
   // Efecto para manejar datos pre-llenados del turno
   useEffect(() => {
@@ -96,9 +110,26 @@ export const Ventas: React.FC = () => {
 
     try {
       const cajeroIdFiltro = profile.role === 'admin' ? undefined : user.uid;
+      
+      // Calcular fechas según el período seleccionado
+      let fechaInicio: Date | undefined;
+      let fechaFin: Date | undefined;
+      
+      if (periodoFiltro === 'hoy') {
+        // Solo ventas de hoy
+        fechaInicio = new Date();
+        fechaInicio.setHours(0, 0, 0, 0);
+        fechaFin = new Date();
+        fechaFin.setHours(23, 59, 59, 999);
+      } else if (periodoFiltro !== 'all') {
+        fechaFin = new Date();
+        fechaInicio = new Date();
+        fechaInicio.setDate(fechaInicio.getDate() - parseInt(periodoFiltro));
+      }
+      
       const [ventasData, clientesData, serviciosData] = await Promise.all([
-        getVentas(cajeroIdFiltro),
-        getClientes(),
+        getVentas(cajeroIdFiltro, fechaInicio, fechaFin, 20, searchTerm),
+        getClientes(), // TODOS los clientes para formularios
         getServiciosActivos()
       ]);
 
@@ -106,14 +137,56 @@ export const Ventas: React.FC = () => {
       if (profile.role === 'cashier' && user.uid) {
         const ventasFiltradas = ventasData.filter(venta => venta.cajeroId === user.uid);
         setVentas(ventasFiltradas);
+        setHasMoreVentas(ventasFiltradas.length === 20);
       } else {
         setVentas(ventasData);
+        setHasMoreVentas(ventasData.length === 20);
       }
       
       setClientes(clientesData);
       setServicios(serviciosData);
     } catch (error) {
       toast.error('Error cargando datos');
+    }
+  };
+
+  const handlePeriodoChange = (nuevoPeriodo: string) => {
+    setPeriodoFiltro(nuevoPeriodo);
+    // Recargar datos con el nuevo período
+    loadData();
+  };
+
+  const loadMoreVentas = async () => {
+    if (loadingMore || !hasMoreVentas || searchTerm.trim() !== '' || periodoFiltro !== 'hoy') return;
+    
+    setLoadingMore(true);
+    try {
+      const cajeroIdFiltro = profile?.role === 'admin' ? undefined : user?.uid;
+      
+      // Calcular fechas para "hoy"
+      const fechaInicio = new Date();
+      fechaInicio.setHours(0, 0, 0, 0);
+      const fechaFin = new Date();
+      fechaFin.setHours(23, 59, 59, 999);
+      
+      const ventasData = await getVentas(cajeroIdFiltro, fechaInicio, fechaFin, ventas.length + 20);
+      
+      if (ventasData.length > ventas.length) {
+        if (profile?.role === 'cashier' && user?.uid) {
+          const ventasFiltradas = ventasData.filter(venta => venta.cajeroId === user.uid);
+          setVentas(ventasFiltradas);
+          setHasMoreVentas(ventasFiltradas.length === ventas.length + 20);
+        } else {
+          setVentas(ventasData);
+          setHasMoreVentas(ventasData.length === ventas.length + 20);
+        }
+      } else {
+        setHasMoreVentas(false);
+      }
+    } catch (error) {
+      toast.error('Error cargando más ventas');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -218,6 +291,7 @@ export const Ventas: React.FC = () => {
     return matchesSearch && matchesDate;
   });
 
+  // Calcular total de ventas (solo para admin)
   const totalVentas = filteredVentas.reduce((sum, venta) => sum + venta.precio, 0);
 
   const handleDeleteVenta = async (ventaId: string) => {
@@ -278,10 +352,13 @@ export const Ventas: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-4">
-          <div className="bg-gray-800 px-4 py-2 rounded-lg">
-            <span className="text-gray-400 text-sm">Total: </span>
-            <span className="text-green-400 font-bold">${totalVentas.toLocaleString()}</span>
-          </div>
+          {/* Total solo visible para admin */}
+          {profile?.role === 'admin' && (
+            <div className="bg-gray-800 px-4 py-2 rounded-lg">
+              <span className="text-gray-400 text-sm">Total: </span>
+              <span className="text-green-400 font-bold">${totalVentas.toLocaleString()}</span>
+            </div>
+          )}
           <button
             onClick={() => {
               setShowForm(true);
@@ -295,6 +372,33 @@ export const Ventas: React.FC = () => {
             <Plus size={20} />
             <span className="whitespace-nowrap">Nueva Venta</span>
           </button>
+        </div>
+      </div>
+
+      {/* Controles de Filtro por Período */}
+      <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center space-x-2">
+            <Clock className="text-gray-400" size={16} />
+            <span className="text-gray-300 text-sm font-medium">Período:</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select 
+              value={periodoFiltro} 
+              onChange={(e) => setPeriodoFiltro(e.target.value)}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-600"
+            >
+              <option value="hoy">Hoy</option>
+              <option value="7">Última semana</option>
+              <option value="30">Últimos 30 días</option>
+              <option value="90">Últimos 3 meses</option>
+              <option value="365">Último año</option>
+              <option value="all">Ver todas</option>
+            </select>
+            <div className="text-xs text-gray-400 flex items-center">
+              📊 Mostrando {filteredVentas.length} ventas
+            </div>
+          </div>
         </div>
       </div>
 
@@ -563,6 +667,29 @@ export const Ventas: React.FC = () => {
           </motion.div>
         ))}
       </div>
+
+      {/* Botón Cargar Más */}
+      {hasMoreVentas && searchTerm.trim() === '' && periodoFiltro === 'hoy' && filteredVentas.length > 0 && (
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={loadMoreVentas}
+            disabled={loadingMore}
+            className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+          >
+            {loadingMore ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Cargando...</span>
+              </>
+            ) : (
+              <>
+                <Plus size={16} />
+                <span>Cargar más ventas</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {filteredVentas.length === 0 && (
         <motion.div

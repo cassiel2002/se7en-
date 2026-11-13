@@ -22,6 +22,8 @@ export const GestionAdelantos: React.FC = () => {
   const { user, profile } = useAuth();
   const [cajeros, setCajeros] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fechaInicio, setFechaInicio] = useState('');
+  const [fechaFin, setFechaFin] = useState('');
   
   // Estados para el formulario de nuevo adelanto
   const [showForm, setShowForm] = useState(false);
@@ -32,12 +34,17 @@ export const GestionAdelantos: React.FC = () => {
     observaciones: ''
   });
 
+  // Calcular fechas para el hook
+  const fechaInicioDate = fechaInicio ? new Date(fechaInicio) : undefined;
+  const fechaFinDate = fechaFin ? new Date(fechaFin) : undefined;
+  const hasDateFilter = fechaInicio || fechaFin;
+  
   const { 
     adelantos, 
     crearAdelanto, 
     marcarComoDescontado, 
     eliminarAdelanto 
-  } = useAdelantos(cajeros);
+  } = useAdelantos(cajeros, fechaInicioDate, fechaFinDate, hasDateFilter ? undefined : 3);
 
   useEffect(() => {
     loadCajeros();
@@ -142,6 +149,54 @@ export const GestionAdelantos: React.FC = () => {
         </button>
       </div>
 
+      {/* Filtros por Fecha */}
+      <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center space-x-2">
+            <Calendar className="text-gray-400" size={16} />
+            <span className="text-gray-300 text-sm font-medium">Filtrar por fecha:</span>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex items-center space-x-2">
+              <label className="text-gray-400 text-sm">Desde:</label>
+              <input
+                type="date"
+                value={fechaInicio}
+                onChange={(e) => setFechaInicio(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-600"
+              />
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <label className="text-gray-400 text-sm">Hasta:</label>
+              <input
+                type="date"
+                value={fechaFin}
+                onChange={(e) => setFechaFin(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-600"
+              />
+            </div>
+            
+            {(fechaInicio || fechaFin) && (
+              <button
+                onClick={() => {
+                  setFechaInicio('');
+                  setFechaFin('');
+                }}
+                className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm transition-colors"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+          
+          <div className="text-xs text-gray-500">
+            {hasDateFilter ? 'Mostrando todos los adelantos del período' : 'Mostrando últimos 3 por cajero'}
+          </div>
+        </div>
+      </div>
+
       {/* Información importante */}
       <div className="bg-orange-900/20 rounded-xl p-4 border border-orange-600/30">
         <h3 className="text-orange-400 font-semibold mb-2">ℹ️ Información Importante</h3>
@@ -149,6 +204,7 @@ export const GestionAdelantos: React.FC = () => {
           <li>• <strong>Adelanto:</strong> Dinero que se te da antes del pago de comisiones</li>
           <li>• <strong>Pendiente:</strong> Adelanto aún no descontado del pago</li>
           <li>• <strong>Descontado:</strong> Ya se aplicó en el cálculo de pagos</li>
+          <li>• <strong>Sin filtros:</strong> Solo se muestran los últimos 3 adelantos por cajero</li>
         </ul>
       </div>
 

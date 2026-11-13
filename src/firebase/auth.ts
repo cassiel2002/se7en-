@@ -1,5 +1,5 @@
-import { 
-  signInWithEmailAndPassword, 
+import {
+  signInWithEmailAndPassword,
   signOut,
   User
 } from 'firebase/auth';
@@ -22,11 +22,11 @@ export const loginUser = async (email: string, password: string) => {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-    
+
     if (!userDoc.exists()) {
       throw new Error('Usuario no encontrado en la base de datos');
     }
-    
+
     return {
       user: userCredential.user,
       profile: userDoc.data() as UserProfile
@@ -56,11 +56,17 @@ export const initializeDefaultUsers = async () => {
   console.log('  👤 Nombre: Administrador Se7en');
   console.log('  🛡️ Rol: admin');
   console.log('');
-  console.log('👨‍💻 CAJERO POR DEFECTO:');
+  console.log('👨‍💻 CAJERO 1:');
   console.log('  📧 Email: cajero1@se7en.com');
   console.log('  🔑 Password: cajero123');
   console.log('  👤 Nombre: Carlos Mendez');
   console.log('  🛡️ Rol: cajero');
+  console.log('');
+  console.log('👨‍💻 CAJERO 2 - LEANDRO:');
+  console.log('  📧 Email: leorb@seven.com');
+  console.log('  🔑 Password: leandro rb');
+  console.log('  👤 Nombre: LeoRB');
+  console.log('  🛡️ Rol: cashier');
   console.log('');
   console.log('💡 Registra estos usuarios manualmente en Firebase Auth y Firestore');
   console.log('📁 Colección: users');

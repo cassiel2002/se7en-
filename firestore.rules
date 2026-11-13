@@ -1,20 +1,23 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper function para verificar si el usuario está autenticado
+    // ============ HELPER FUNCTIONS ============
+    
+    // Verificar si el usuario está autenticado
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    // Helper function para verificar si el usuario es admin
+    // Verificar si el usuario es admin
     function isAdmin() {
       return isAuthenticated() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
-    // Helper function para verificar si el usuario es cajero o admin
+    // Verificar si el usuario es cajero o admin
     function isCajeroOrAdmin() {
       return isAuthenticated() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -23,21 +26,29 @@ service cloud.firestore {
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cajero');
     }
 
+    // Verificar si es el propio usuario
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ============ REGLAS DE ACCESO ============
+
     // USUARIOS - Solo admin puede crear/editar usuarios, usuarios pueden leer su propio perfil
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
-      allow write: if isAdmin();
+      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow create, update, delete: if isAdmin();
     }
 
     // CLIENTES - Admin y cajeros pueden leer y escribir
     match /clientes/{clienteId} {
-      allow read, write: if isCajeroOrAdmin();
+      allow read, create, update: if isCajeroOrAdmin();
+      allow delete: if isAdmin();
     }
 
     // SERVICIOS - Admin y cajeros pueden leer, solo admin puede escribir
     match /servicios/{servicioId} {
       allow read: if isCajeroOrAdmin();
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
     // VENTAS - Admin y cajeros pueden crear y leer ventas
@@ -46,7 +57,7 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // TURNOS - Admin y cajeros pueden gestionar turnos
+    // TURNOS/AGENDA - Admin y cajeros pueden gestionar turnos
     match /turnos/{turnoId} {
       allow read, create, update: if isCajeroOrAdmin();
       allow delete: if isAdmin();
@@ -58,14 +69,34 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // ADELANTOS - Admin puede todo, cajeros pueden crear y leer los suyos
+    // ADELANTOS - Admin puede todo, cajeros pueden crear y leer
     match /adelantos/{adelantoId} {
       allow read: if isCajeroOrAdmin();
-      allow create: if isCajeroOrAdmin() && 
-                   (isAdmin() || request.auth.uid == request.resource.data.cajeroId);
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow create: if isCajeroOrAdmin();
+      allow update, delete: if isAdmin();
     }
+
+    // ============ SISTEMA DE PUNTOS ============
+
+    // PREMIOS - Admin puede gestionar, cajeros pueden leer
+    match /premios/{premioId} {
+      allow read: if isCajeroOrAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // CANJES DE PUNTOS - Admin y cajeros pueden crear y leer
+    match /canjes_puntos/{canjeId} {
+      allow read, create: if isCajeroOrAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // MOVIMIENTOS DE PUNTOS - Admin y cajeros pueden crear y leer
+    match /movimientos_puntos/{movimientoId} {
+      allow read, create: if isCajeroOrAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // ============ CONFIGURACIÓN Y LOGS ============
 
     // CONFIGURACIÓN DEL SISTEMA - Solo admin
     match /config/{configId} {
@@ -75,9 +106,12 @@ service cloud.firestore {
     // LOGS/AUDITORÍA - Solo lectura para admin
     match /logs/{logId} {
       allow read: if isAdmin();
-      allow write: if false;
+      allow create: if isAuthenticated(); // Permitir crear logs para auditoría
+      allow update, delete: if false; // Los logs no se modifican
     }
 
+    // ============ REGLA CATCH-ALL ============
+    
     // Denegar acceso a cualquier otra colección no especificada
     match /{document=**} {
       allow read, write: if false;

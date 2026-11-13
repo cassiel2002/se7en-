@@ -91,8 +91,8 @@ export const Reportes: React.FC = () => {
       const cajeroIdFiltro = profile?.role === 'admin' ? undefined : user?.uid;
 
       const [ventas, clientes, cajerosData] = await Promise.all([
-        getVentas(cajeroIdFiltro, inicio, fin),
-        getClientes(),
+        getVentas(cajeroIdFiltro, inicio, fin, 1000), // Límite alto para reportes
+        getClientes(), // TODOS los clientes para reportes
         // Cargar todos los cajeros para el manejo de plus
         getDocs(query(collection(db, 'users'), where('role', 'in', ['cashier', 'cajero', 'admin'])))
       ]);

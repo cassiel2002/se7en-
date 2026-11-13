@@ -11,10 +11,13 @@ import { Servicios } from './pages/Servicios';
 import { Ventas } from './pages/Ventas';
 import { Reportes } from './pages/Reportes';
 import { Cajeros } from './pages/Cajeros';
+import { Premios } from './pages/Premios';
 import { CajeroDashboard } from './pages/CajeroDashboard';
 import { GestionEncargados } from './pages/GestionEncargados';
 import { GestionAdelantos } from './pages/GestionAdelantos';
 import { initializeDefaultUsers } from './firebase/auth';
+import { initializePremios } from './firebase/initPremios';
+import { cleanDuplicatePremios } from './scripts/cleanDuplicatePremios';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalLoading } from './components/GlobalLoading';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
@@ -88,6 +91,7 @@ const AppRoutes: React.FC = () => {
 
         {/* Admin-only routes - these still need ProtectedRoute for role check */}
         <Route path="/servicios" element={<ProtectedRoute requiredRoles={['admin']}><Servicios /></ProtectedRoute>} />
+        <Route path="/premios" element={<Premios />} />
         <Route path="/reportes" element={<ProtectedRoute requiredRoles={['admin']}><Reportes /></ProtectedRoute>} />
         <Route path="/cajeros" element={<ProtectedRoute requiredRoles={['admin']}><Cajeros /></ProtectedRoute>} />
         <Route path="/encargados" element={<ProtectedRoute requiredRoles={['admin']}><GestionEncargados /></ProtectedRoute>} />
@@ -117,9 +121,14 @@ function App() {
   useEffect(() => {
     initializeDefaultUsers();
     
+    // NO inicializar premios automáticamente para evitar duplicados
+    // Los premios se deben crear manualmente desde la consola: initDevData()
+    // initializePremios();
+    
     // Registrar Service Worker para PWA
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/se7en/sw.js')
+      const swPath = process.env.NODE_ENV === 'production' ? '/se7en/sw.js' : '/sw.js';
+      navigator.serviceWorker.register(swPath)
         .then((registration) => {
           console.log('🔧 Service Worker registrado:', registration.scope);
           
@@ -148,7 +157,7 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Router>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <div className="App">
             <AppRoutes />
             <PWAInstallPrompt />

@@ -13,7 +13,7 @@ interface AdelantoData {
   totalDescontado: number;
 }
 
-export const useAdelantos = (cajeros: UserProfile[], fechaReporte?: Date, fechaFin?: Date) => {
+export const useAdelantos = (cajeros: UserProfile[], fechaReporte?: Date, fechaFin?: Date, limitCount?: number) => {
   const { user, profile } = useAuth();
   const [adelantos, setAdelantos] = useState<Adelanto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -33,7 +33,8 @@ export const useAdelantos = (cajeros: UserProfile[], fechaReporte?: Date, fechaF
         const adelantosData = await getAdelantos(cajeroId, fechaReporte);
         setAdelantos(adelantosData);
       } else {
-        const adelantosData = await getAdelantos(cajeroId);
+        // Sin filtros de fecha, aplicar límite
+        const adelantosData = await getAdelantos(cajeroId, undefined, undefined, undefined, limitCount);
         setAdelantos(adelantosData);
       }
     } catch (error) {
@@ -41,7 +42,7 @@ export const useAdelantos = (cajeros: UserProfile[], fechaReporte?: Date, fechaF
     } finally {
       setLoading(false);
     }
-  }, [user?.uid, profile?.role, fechaReporte, fechaFin]);
+  }, [user?.uid, profile?.role, fechaReporte, fechaFin, limitCount]);
 
   useEffect(() => {
     loadAdelantos();

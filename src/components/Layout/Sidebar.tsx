@@ -12,7 +12,9 @@ import {
   LogOut,
   X,
   Star,
-  CreditCard
+  CreditCard,
+  Gift,
+  Crown
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { logoutUser } from '../../firebase/auth';
@@ -54,9 +56,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { icon: Calendar, label: 'Agenda', path: '/agenda' },
     { icon: Scissors, label: 'Servicios', path: '/servicios' },
     { icon: ShoppingCart, label: 'Ventas', path: '/ventas' },
+    { icon: Gift, label: 'Premios', path: '/premios' },
     { icon: BarChart3, label: 'Reportes', path: '/reportes' },
     { icon: UserPlus, label: 'Cajeros', path: '/cajeros' },
-    { icon: Star, label: 'Encargados', path: '/encargados' },
+    { icon: Crown, label: 'Encargados', path: '/encargados' },
     { icon: CreditCard, label: 'Adelantos', path: '/adelantos' }
   ];
 
@@ -65,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { icon: Calendar, label: 'Agenda', path: '/cajero/agenda' },
     { icon: Users, label: 'Clientes', path: '/cajero/clientes' },
     { icon: ShoppingCart, label: 'Ventas', path: '/cajero/ventas' },
+    { icon: Gift, label: 'Premios', path: '/premios' },
     { icon: CreditCard, label: 'Adelantos', path: '/cajero/adelantos' }
   ];
 

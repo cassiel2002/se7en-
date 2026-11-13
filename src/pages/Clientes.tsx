@@ -11,9 +11,11 @@ import {
   Edit,
   Trash2,
   User,
-  CreditCard
+  CreditCard,
+  Star,
+  Gift
 } from 'lucide-react';
-import { Cliente, createCliente, getClientes, updateCliente, deleteCliente } from '../firebase/firestore';
+import { Cliente, createCliente, getClientes, getClientesPaginados, updateCliente, deleteCliente, getClientesCount, getPremios, canjearPuntos } from '../firebase/firestore';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import { ButtonLoading } from '../components/GlobalLoading';
@@ -31,24 +33,134 @@ export const Clientes: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [hasMoreClientes, setHasMoreClientes] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [sortBy, setSortBy] = useState<'nombre' | 'fecha' | 'puntos'>('nombre');
+  const [totalClientes, setTotalClientes] = useState(0);
+  
+  // Estados para sistema de canje
+  const [showCanjeModal, setShowCanjeModal] = useState(false);
+  const [clienteParaCanje, setClienteParaCanje] = useState<Cliente | null>(null);
+  const [premiosDisponibles, setPremiosDisponibles] = useState<any[]>([]);
+  const [loadingPremios, setLoadingPremios] = useState(false);
+  const [canjeando, setCanjeando] = useState(false);
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ClienteFormData>();
 
   useEffect(() => {
     loadClientes();
+    loadTotalClientes();
   }, []);
 
-  const loadClientes = async () => {
+  const loadTotalClientes = async () => {
     try {
-      const clientesData = await getClientes();
+      const total = await getClientesCount();
+      setTotalClientes(total);
+    } catch (error) {
+      console.error('Error cargando total de clientes');
+    }
+  };
+
+  // Función para abrir modal de canje
+  const handleOpenCanje = async (cliente: Cliente) => {
+    if (!cliente.puntos || cliente.puntos < 1) {
+      toast.error('El cliente no tiene puntos suficientes para canjear');
+      return;
+    }
+
+    setClienteParaCanje(cliente);
+    setLoadingPremios(true);
+    setShowCanjeModal(true);
+
+    try {
+      // Cargar todos los premios activos
+      const premios = await getPremios(100); // Cargar más premios para asegurar que estén todos
+      
+      // Filtrar premios disponibles para este cliente
+      const disponibles = premios.filter(premio => 
+        premio.activo && 
+        premio.puntosRequeridos <= cliente.puntos
+      );
+
+      setPremiosDisponibles(disponibles);
+      
+      if (disponibles.length === 0) {
+        toast.info(`${cliente.nombre} tiene ${cliente.puntos} puntos, pero no hay premios disponibles`);
+      }
+    } catch (error) {
+      toast.error('Error cargando premios disponibles');
+      setShowCanjeModal(false);
+    } finally {
+      setLoadingPremios(false);
+    }
+  };
+
+  // Función para realizar el canje
+  const handleCanjearPremio = async (premioId: string) => {
+    if (!clienteParaCanje || !user) {
+      toast.error('Error en los datos del canje');
+      return;
+    }
+
+    setCanjeando(true);
+    try {
+      await canjearPuntos(clienteParaCanje.id!, premioId, user);
+      
+      toast.success(`¡Premio canjeado exitosamente para ${clienteParaCanje.nombre}!`);
+      
+      // Recargar clientes para actualizar puntos
+      await loadClientes();
+      
+      // Cerrar modal
+      setShowCanjeModal(false);
+      setClienteParaCanje(null);
+      setPremiosDisponibles([]);
+      
+    } catch (error: any) {
+      toast.error(error.message || 'Error realizando el canje');
+    } finally {
+      setCanjeando(false);
+    }
+  };
+
+  // Función para cerrar modal
+  const handleCloseCanje = () => {
+    setShowCanjeModal(false);
+    setClienteParaCanje(null);
+    setPremiosDisponibles([]);
+  };
+
+  const loadClientes = async (search?: string) => {
+    try {
+      const clientesData = await getClientesPaginados(10, search);
       setClientes(clientesData);
+      setHasMoreClientes(clientesData.length === 10); // Si trajo 10, puede haber más
     } catch (error) {
       toast.error('Error cargando clientes');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreClientes = async () => {
+    if (loadingMore || !hasMoreClientes || searchTerm.trim() !== '') return;
+    
+    setLoadingMore(true);
+    try {
+      const clientesData = await getClientesPaginados(clientes.length + 10);
+      if (clientesData.length > clientes.length) {
+        setClientes(clientesData);
+        setHasMoreClientes(clientesData.length === clientes.length + 10);
+      } else {
+        setHasMoreClientes(false);
+      }
+    } catch (error) {
+      toast.error('Error cargando más clientes');
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -113,12 +225,34 @@ export const Clientes: React.FC = () => {
     }
   };
 
-  const filteredClientes = clientes.filter(cliente =>
-    cliente.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    cliente.telefono.includes(searchTerm) ||
-    (cliente.email && cliente.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (cliente.dni && cliente.dni.includes(searchTerm))
-  );
+  // Efecto para manejar la búsqueda
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm.trim() !== '') {
+        loadClientes(searchTerm);
+      } else {
+        loadClientes();
+      }
+    }, 300); // Debounce de 300ms
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
+
+  // Función para ordenar clientes
+  const sortedClientes = [...clientes].sort((a, b) => {
+    switch (sortBy) {
+      case 'nombre':
+        return a.nombre.localeCompare(b.nombre);
+      case 'fecha':
+        return b.createdAt.getTime() - a.createdAt.getTime(); // Más recientes primero
+      case 'puntos':
+        return (b.puntos || 0) - (a.puntos || 0); // Más puntos primero
+      default:
+        return 0;
+    }
+  });
+
+  const filteredClientes = sortedClientes;
 
   if (loading) {
     return (
@@ -139,6 +273,18 @@ export const Clientes: React.FC = () => {
           <p className="text-gray-400 mt-2 text-sm sm:text-base">
             Administra la base de datos de clientes
           </p>
+          <div className="mt-2 flex items-center space-x-4">
+            <div className="bg-blue-600/20 px-3 py-1 rounded-full">
+              <span className="text-blue-400 text-sm font-medium">
+                📊 Total: {totalClientes} clientes
+              </span>
+            </div>
+            <div className="bg-gray-800/50 px-3 py-1 rounded-full">
+              <span className="text-gray-400 text-sm">
+                📋 Mostrando: {filteredClientes.length}
+              </span>
+            </div>
+          </div>
         </div>
         
         <button
@@ -154,16 +300,55 @@ export const Clientes: React.FC = () => {
         </button>
       </div>
 
-      {/* Buscador */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-        <input
-          type="text"
-          placeholder="Buscar clientes..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
-        />
+      {/* Buscador y Ordenamiento */}
+      <div className="space-y-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+          <input
+            type="text"
+            placeholder="Buscar clientes..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+          />
+        </div>
+        
+        {/* Controles de Ordenamiento */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <span className="text-gray-400 text-sm font-medium">Ordenar por:</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSortBy('nombre')}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                sortBy === 'nombre' 
+                  ? 'bg-red-600 text-white' 
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              📝 Alfabético
+            </button>
+            <button
+              onClick={() => setSortBy('fecha')}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                sortBy === 'fecha' 
+                  ? 'bg-red-600 text-white' 
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              📅 Fecha
+            </button>
+            <button
+              onClick={() => setSortBy('puntos')}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                sortBy === 'puntos' 
+                  ? 'bg-red-600 text-white' 
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              ⭐ Puntos
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Formulario */}
@@ -271,6 +456,17 @@ export const Clientes: React.FC = () => {
                 <User className="text-white" size={20} />
               </div>
               <div className="flex space-x-2">
+                {/* Botón de canje - visible para todos si el cliente tiene puntos */}
+                {(cliente.puntos || 0) >= 1 && (
+                  <button
+                    onClick={() => handleOpenCanje(cliente)}
+                    className="text-yellow-400 hover:text-yellow-300 transition-colors"
+                    title={`Canjear premio (${cliente.puntos} puntos)`}
+                  >
+                    <Gift size={16} />
+                  </button>
+                )}
+                
                 <button
                   onClick={() => handleEdit(cliente)}
                   className="text-blue-400 hover:text-blue-300 transition-colors"
@@ -302,7 +498,15 @@ export const Clientes: React.FC = () => {
                     DNI: {cliente.dni}
                   </p>
                 )}
-                <p className="text-gray-400 text-sm">{cliente.visitas} visitas</p>
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-gray-400 text-sm">{cliente.visitas} visitas</p>
+                  <div className="flex items-center bg-yellow-600/20 px-2 py-1 rounded-full">
+                    <Star className="mr-1 text-yellow-500" size={14} />
+                    <span className="text-yellow-400 text-sm font-medium">
+                      {cliente.puntos || 0} pts
+                    </span>
+                  </div>
+                </div>
               </div>
               
               <div className="flex items-center text-gray-300">
@@ -330,6 +534,29 @@ export const Clientes: React.FC = () => {
         ))}
       </div>
 
+      {/* Botón Cargar Más */}
+      {hasMoreClientes && searchTerm.trim() === '' && filteredClientes.length > 0 && (
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={loadMoreClientes}
+            disabled={loadingMore}
+            className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+          >
+            {loadingMore ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Cargando...</span>
+              </>
+            ) : (
+              <>
+                <Plus size={16} />
+                <span>Cargar más clientes</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
       {filteredClientes.length === 0 && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -344,6 +571,109 @@ export const Clientes: React.FC = () => {
             {searchTerm ? 'Intenta con otros términos de búsqueda' : 'Comienza agregando tu primer cliente'}
           </p>
         </motion.div>
+      )}
+
+      {/* Modal de Canje de Premios */}
+      {showCanjeModal && clienteParaCanje && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-gray-900 rounded-xl p-6 max-w-md w-full border border-gray-800"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold text-white flex items-center">
+                <Gift className="mr-2 text-yellow-500" size={24} />
+                Canjear Premio
+              </h3>
+              <button
+                onClick={handleCloseCanje}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-gray-300">
+                <strong>{clienteParaCanje.nombre}</strong>
+              </p>
+              <p className="text-yellow-400 flex items-center mt-1">
+                <Star className="mr-1" size={16} />
+                {clienteParaCanje.puntos} puntos disponibles
+              </p>
+            </div>
+
+            {loadingPremios ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
+                <span className="ml-2 text-gray-400">Cargando premios...</span>
+              </div>
+            ) : premiosDisponibles.length > 0 ? (
+              <div className="space-y-3 max-h-60 overflow-y-auto">
+                {premiosDisponibles.map((premio) => (
+                  <div
+                    key={premio.id}
+                    className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-semibold text-white">{premio.nombre}</h4>
+                      <div className="flex items-center bg-yellow-600/20 px-2 py-1 rounded-full">
+                        <Star className="mr-1 text-yellow-500" size={14} />
+                        <span className="text-yellow-400 text-sm">
+                          {premio.puntosRequeridos} pts
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <p className="text-gray-400 text-sm mb-3">{premio.descripcion}</p>
+                    
+                    {premio.tipo === 'descuento' && premio.valor && (
+                      <div className="text-blue-400 font-semibold text-sm mb-3">
+                        {premio.valor}% de descuento
+                      </div>
+                    )}
+                    
+                    <button
+                      onClick={() => handleCanjearPremio(premio.id)}
+                      disabled={canjeando}
+                      className="w-full bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                    >
+                      {canjeando ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                          Canjeando...
+                        </>
+                      ) : (
+                        <>
+                          <Gift className="mr-2" size={16} />
+                          Canjear Premio
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Gift className="mx-auto text-gray-600 mb-4" size={48} />
+                <p className="text-gray-400 mb-2">No hay premios disponibles</p>
+                <p className="text-gray-500 text-sm">
+                  {clienteParaCanje.nombre} necesita más puntos para canjear premios
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 pt-4 border-t border-gray-800">
+              <button
+                onClick={handleCloseCanje}
+                className="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
     </div>
   );
