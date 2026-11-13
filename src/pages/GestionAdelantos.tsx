@@ -10,7 +10,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { UserProfile } from '../firebase/auth';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { useAdelantos } from '../hooks/useAdelantos';
@@ -52,19 +52,26 @@ export const GestionAdelantos: React.FC = () => {
 
   const loadCajeros = async () => {
     try {
-      let q;
+      let cajerosData: UserProfile[];
       if (profile?.role === 'admin') {
-        q = query(collection(db, 'users'), where('role', '==', 'cashier'));
+        const querySnapshot = await getDocs(
+          query(collection(db, 'users'), where('role', 'in', ['cashier', 'cajero']))
+        );
+        cajerosData = querySnapshot.docs.map(d => ({
+          uid: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate() || new Date()
+        } as UserProfile));
+      } else if (user?.uid) {
+        // El cajero solo puede leer su propio documento (reglas de Firestore):
+        // una consulta "where uid ==" sobre la colección es rechazada.
+        const propio = await getDoc(doc(db, 'users', user.uid));
+        cajerosData = propio.exists()
+          ? [{ uid: propio.id, ...propio.data(), createdAt: propio.data().createdAt?.toDate() || new Date() } as UserProfile]
+          : [];
       } else {
-        q = query(collection(db, 'users'), where('uid', '==', user?.uid));
+        cajerosData = [];
       }
-      
-      const querySnapshot = await getDocs(q);
-      const cajerosData = querySnapshot.docs.map(doc => ({
-        uid: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date()
-      } as UserProfile));
       
       setCajeros(cajerosData);
       

@@ -68,13 +68,16 @@ export const Ventas: React.FC = () => {
     loadData();
   }, [profile, user, periodoFiltro]);
 
-  // Efecto para manejar la búsqueda con debounce
+  // Búsqueda: en los períodos con fechas la lista ya está cargada completa y se
+  // filtra en memoria (filteredVentas). Solo en "todas" se consulta al servidor,
+  // porque esa vista carga únicamente las últimas ventas.
   useEffect(() => {
+    if (periodoFiltro !== 'all') return;
     const timeoutId = setTimeout(() => {
       if (profile && user) {
         loadData();
       }
-    }, 300); // Debounce de 300ms
+    }, 500); // Debounce
 
     return () => clearTimeout(timeoutId);
   }, [searchTerm]);
@@ -128,7 +131,7 @@ export const Ventas: React.FC = () => {
       }
       
       const [ventasData, clientesData, serviciosData] = await Promise.all([
-        getVentas(cajeroIdFiltro, fechaInicio, fechaFin, 20, searchTerm),
+        getVentas(cajeroIdFiltro, fechaInicio, fechaFin, 20, periodoFiltro === 'all' ? searchTerm : undefined),
         getClientes(), // TODOS los clientes para formularios
         getServiciosActivos()
       ]);
@@ -228,6 +231,8 @@ export const Ventas: React.FC = () => {
         clienteParaVenta = {
           id: clienteId,
           ...nuevoCliente,
+          puntos: 0,
+          puntosCanjeados: 0,
           createdAt: new Date()
         };
         

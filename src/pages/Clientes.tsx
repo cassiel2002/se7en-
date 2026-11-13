@@ -50,8 +50,8 @@ export const Clientes: React.FC = () => {
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ClienteFormData>();
 
+  // La primera carga de clientes la hace el efecto de búsqueda (searchTerm = '').
   useEffect(() => {
-    loadClientes();
     loadTotalClientes();
   }, []);
 
@@ -88,7 +88,7 @@ export const Clientes: React.FC = () => {
       setPremiosDisponibles(disponibles);
       
       if (disponibles.length === 0) {
-        toast.info(`${cliente.nombre} tiene ${cliente.puntos} puntos, pero no hay premios disponibles`);
+        toast(`${cliente.nombre} tiene ${cliente.puntos} puntos, pero no hay premios disponibles`);
       }
     } catch (error) {
       toast.error('Error cargando premios disponibles');
@@ -150,13 +150,11 @@ export const Clientes: React.FC = () => {
     
     setLoadingMore(true);
     try {
-      const clientesData = await getClientesPaginados(clientes.length + 10);
-      if (clientesData.length > clientes.length) {
-        setClientes(clientesData);
-        setHasMoreClientes(clientesData.length === clientes.length + 10);
-      } else {
-        setHasMoreClientes(false);
-      }
+      // Pide solo los 10 siguientes (antes volvía a leer todos los ya cargados).
+      const ultimo = clientes[clientes.length - 1];
+      const siguientes = await getClientesPaginados(10, undefined, ultimo?.createdAt);
+      setClientes([...clientes, ...siguientes.filter((c) => !clientes.some((x) => x.id === c.id))]);
+      setHasMoreClientes(siguientes.length === 10);
     } catch (error) {
       toast.error('Error cargando más clientes');
     } finally {

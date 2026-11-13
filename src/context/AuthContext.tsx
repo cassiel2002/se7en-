@@ -1,15 +1,18 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User } from 'firebase/auth';
-import { auth } from '../firebase/config';
-import { UserProfile } from '../firebase/auth';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { User, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
-import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../firebase/config';
+import { UserProfile, normalizeProfile } from '../firebase/auth';
+import { getFriendlyErrorMessage } from '../utils/firebaseErrors';
 
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  /** Error al cargar el perfil (sin conexión, cuota, permisos...). */
+  profileError: string | null;
+  /** Reintenta cargar el perfil del usuario autenticado. */
+  retryProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -17,46 +20,51 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    console.log('AuthContext useEffect: Iniciando');
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      console.log('AuthContext: onAuthStateChanged - currentUser:', currentUser?.email);
-      setUser(currentUser);
-
-      if (currentUser) {
-        console.log('AuthContext: currentUser existe. Intentando cargar perfil para UID:', currentUser.uid);
-        try {
-          const profileDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (profileDoc.exists()) {
-            const userProfileData = { uid: currentUser.uid, ...profileDoc.data() } as UserProfile;
-            console.log('AuthContext: Perfil cargado exitosamente:', userProfileData);
-            setProfile(userProfileData);
-          } else {
-            console.warn('AuthContext: No se encontró el documento de perfil para UID:', currentUser.uid);
-            setProfile(null); // Asegurarse de que el perfil es null si no se encuentra
-          }
-        } catch (error) {
-          console.error('AuthContext: Error cargando perfil:', error);
-          setProfile(null); // Asegurarse de que el perfil es null en caso de error
-        }
+  const loadProfile = useCallback(async (currentUser: User) => {
+    try {
+      const profileDoc = await getDoc(doc(db, 'users', currentUser.uid));
+      if (profileDoc.exists()) {
+        setProfile(normalizeProfile(currentUser.uid, profileDoc.data()));
+        setProfileError(null);
       } else {
-        console.log('AuthContext: No hay currentUser, limpiando perfil.');
+        console.warn('AuthContext: el usuario no tiene documento de perfil:', currentUser.uid);
         setProfile(null);
+        setProfileError(getFriendlyErrorMessage({ code: 'app/profile-not-found' }));
       }
-      setLoading(false);
-      console.log('AuthContext useEffect: Finalizado.');
-    });
-
-    return () => {
-      console.log('AuthContext useEffect: Desuscribiendo onAuthStateChanged');
-      unsubscribeAuth();
-    };
+    } catch (error) {
+      console.error('AuthContext: error cargando perfil:', error);
+      setProfile(null);
+      setProfileError(getFriendlyErrorMessage(error));
+    }
   }, []);
 
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        await loadProfile(currentUser);
+      } else {
+        setProfile(null);
+        setProfileError(null);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribeAuth;
+  }, [loadProfile]);
+
+  const retryProfile = useCallback(async () => {
+    if (!auth.currentUser) return;
+    setLoading(true);
+    await loadProfile(auth.currentUser);
+    setLoading(false);
+  }, [loadProfile]);
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading }}>
+    <AuthContext.Provider value={{ user, profile, loading, profileError, retryProfile }}>
       {children}
     </AuthContext.Provider>
   );

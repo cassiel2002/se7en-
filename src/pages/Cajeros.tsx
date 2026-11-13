@@ -17,9 +17,8 @@ import { UserProfile } from '../firebase/auth';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../context/AuthContext';
-import { deleteCajeroProfile, getVentas, Venta } from '../firebase/firestore';
+import { deleteCajeroProfile, getVentasMesActual, Venta } from '../firebase/firestore';
 import toast from 'react-hot-toast';
-import { startOfMonth, endOfMonth } from 'date-fns';
 
 interface RendimientoCajero {
   cajeroId: string;
@@ -44,11 +43,12 @@ export const Cajeros: React.FC = () => {
 
   const loadCajeros = async () => {
     try {
-      const q = query(collection(db, 'users'), where('role', '==', 'cashier'));
+      const q = query(collection(db, 'users'), where('role', 'in', ['cashier', 'cajero']));
       const querySnapshot = await getDocs(q);
       
       const cajerosData = querySnapshot.docs.map(doc => ({
         ...doc.data(),
+        uid: doc.id,
         createdAt: doc.data().createdAt?.toDate() || new Date()
       } as UserProfile));
       
@@ -65,13 +65,8 @@ export const Cajeros: React.FC = () => {
   const loadRendimiento = async () => {
     setLoadingRendimiento(true);
     try {
-      const fechaInicio = startOfMonth(new Date());
-      const fechaFin = endOfMonth(new Date());
-      
-      console.log('📊 Cargando rendimiento del mes:', { fechaInicio, fechaFin });
-      
-      // Obtener todas las ventas del mes actual
-      const ventas = await getVentas(undefined, fechaInicio, fechaFin, 1000); // Límite alto para cálculos
+      // Reutiliza el cache de ventas del mes del dashboard (no relee todo el mes).
+      const ventas = await getVentasMesActual();
       console.log('📈 Ventas del mes:', ventas);
       
       // Agrupar ventas por cajero

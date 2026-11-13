@@ -1,9 +1,8 @@
 import {
   signInWithEmailAndPassword,
-  signOut,
-  User
+  signOut
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, DocumentData } from 'firebase/firestore';
 import { auth, db } from './config';
 
 export interface UserProfile {
@@ -18,22 +17,31 @@ export interface UserProfile {
   plusEncargadoActivo?: boolean; // Si el plus automático está activo
 }
 
+/**
+ * Unifica el rol: históricamente se guardó 'cajero' y 'cashier' para lo mismo.
+ * La app usa 'cashier' para el cajero.
+ */
+export const normalizeProfile = (uid: string, data: DocumentData): UserProfile => ({
+  ...(data as UserProfile),
+  uid,
+  role: data.role === 'cajero' ? 'cashier' : data.role,
+});
+
+// Los errores se propagan sin envolver para conservar `error.code`
+// (auth/..., resource-exhausted, unavailable, etc.).
 export const loginUser = async (email: string, password: string) => {
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+  const userCredential = await signInWithEmailAndPassword(auth, email, password);
+  const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
 
-    if (!userDoc.exists()) {
-      throw new Error('Usuario no encontrado en la base de datos');
-    }
-
-    return {
-      user: userCredential.user,
-      profile: userDoc.data() as UserProfile
-    };
-  } catch (error: any) {
-    throw new Error(error.message);
+  if (!userDoc.exists()) {
+    await signOut(auth);
+    throw Object.assign(new Error('Usuario sin perfil en la base de datos'), { code: 'app/profile-not-found' });
   }
+
+  return {
+    user: userCredential.user,
+    profile: normalizeProfile(userCredential.user.uid, userDoc.data())
+  };
 };
 
 export const logoutUser = async () => {
@@ -42,34 +50,4 @@ export const logoutUser = async () => {
   } catch (error: any) {
     throw new Error(error.message);
   }
-};
-
-export const initializeDefaultUsers = async () => {
-  console.log('🚀 Inicializando usuarios por defecto...');
-  console.log('');
-  console.log('📋 USUARIOS PARA REGISTRAR EN FIREBASE:');
-  console.log('=====================================');
-  console.log('');
-  console.log('👨‍💼 ADMINISTRADOR:');
-  console.log('  📧 Email: admin@se7en.com');
-  console.log('  🔑 Password: admin123');
-  console.log('  👤 Nombre: Administrador Se7en');
-  console.log('  🛡️ Rol: admin');
-  console.log('');
-  console.log('👨‍💻 CAJERO 1:');
-  console.log('  📧 Email: cajero1@se7en.com');
-  console.log('  🔑 Password: cajero123');
-  console.log('  👤 Nombre: Carlos Mendez');
-  console.log('  🛡️ Rol: cajero');
-  console.log('');
-  console.log('👨‍💻 CAJERO 2 - LEANDRO:');
-  console.log('  📧 Email: leorb@seven.com');
-  console.log('  🔑 Password: leandro rb');
-  console.log('  👤 Nombre: LeoRB');
-  console.log('  🛡️ Rol: cashier');
-  console.log('');
-  console.log('💡 Registra estos usuarios manualmente en Firebase Auth y Firestore');
-  console.log('📁 Colección: users');
-  console.log('🆔 Document ID: usar el UID de Firebase Auth');
-  console.log('');
 };

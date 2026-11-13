@@ -8,7 +8,7 @@ import {
   Scissors,
   Clock
 } from 'lucide-react';
-import { getVentas, getClientes, getClientesPaginados, getTurnos, getDashboardData } from '../firebase/firestore';
+import { getTurnos, getDashboardData } from '../firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { format, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -56,7 +56,6 @@ export const Dashboard: React.FC = () => {
       // Usar datos con cache para dashboard (5 minutos)
       const dashboardData = await getDashboardData(cajeroIdFiltro);
       const ventas = dashboardData.ventas;
-      const clientes = dashboardData.clientes;
       
       // Solo turnos sin cache (se usa poco)
       const turnos = await getTurnos(hoy, cajeroIdFiltro);
@@ -98,7 +97,7 @@ export const Dashboard: React.FC = () => {
       setStats({
         ventasHoy,
         ventasMes,
-        clientesTotal: clientes.length,
+        clientesTotal: dashboardData.clientesTotal,
         turnosHoy: turnos.filter(t => t.estado === 'pendiente').length,
         servicioMasVendido,
         cajeroTop

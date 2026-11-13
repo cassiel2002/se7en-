@@ -2,9 +2,12 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: process.env.NODE_ENV === 'production' ? '/se7en/' : '/',
+  // En producción se eliminan los console.log/console.info/console.debug
+  // (pueden exponer datos de clientes y ventas); se conservan warn y error.
+  esbuild: mode === 'production' ? { pure: ['console.log', 'console.info', 'console.debug'] } : undefined,
+  base: mode === 'production' ? '/se7en/' : '/',
   server: {
     port: 5173,
     host: true,
@@ -30,4 +33,4 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
-});
+}));

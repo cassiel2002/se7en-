@@ -1,128 +1,84 @@
-# 🚀 Guía de Despliegue - Se7en Barbershop
+# Guía de despliegue — Se7en Barbershop (v4.0)
 
-## 📋 Configuración para kioskito.click/se7en
+Destino: **https://cassdev.com.ar/se7en/** (Hostinger, Apache).
 
-### ✅ Cambios Realizados
+## 1. Requisitos
 
-La aplicación ha sido configurada para funcionar correctamente en **kioskito.click/se7en**:
+- Node.js 18 o superior.
+- Archivo `.env.local` (o `.env.production.local`) con las variables `VITE_FIREBASE_*`
+  (ver `.env.local.example`). **No se suben al repositorio.**
 
-1. **Base Path**: Configurado en `vite.config.ts` como `/se7en/`
-2. **Router**: React Router configurado con `basename="/se7en/"`
-3. **Assets**: Todas las rutas de imágenes actualizadas
-4. **Meta Tags**: SEO optimizado para el nuevo dominio
-
-### 🛠️ Comandos de Build
+## 2. Build
 
 ```bash
-# Instalar dependencias
-npm install
-
-# Build para producción
+npm ci
 npm run build
-
-# Vista previa del build
-npm run preview
 ```
 
-### 📁 Estructura de Archivos para Deploy
+El resultado queda en `dist/`. El `base` de Vite es `/se7en/`, así que todos los
+recursos apuntan a `/se7en/...`.
 
-```
-dist/
-├── index.html
-├── manifest.json          ← Nuevo: Configuración PWA
-├── sw.js                  ← Nuevo: Service Worker
-├── assets/
-│   ├── index-[hash].js
-│   ├── index-[hash].css
-│   └── logo-se7en.jpeg
-└── se7en/
-    └── logo-se7en.jpeg
-```
+## 3. Subida a Hostinger
 
-### 🔧 Archivos PWA Importantes
+1. En el Administrador de archivos, abrir `public_html/se7en/` (crearla si no existe).
+2. Borrar el contenido anterior de esa carpeta.
+3. Subir **todo el contenido** de `dist/`, incluido el archivo oculto `.htaccess`
+   (maneja las rutas de la SPA, cache de assets y cabeceras de seguridad).
+4. Verificar que HTTPS esté activo en `cassdev.com.ar`.
 
-**manifest.json**: Configuración para instalación como app nativa
-**sw.js**: Service Worker para funcionamiento offline
-**.htaccess**: Redirecciones para SPA (debe estar en la carpeta se7en)
+## 4. Firebase (una sola vez por versión)
 
-### 🌐 Configuración del Servidor Web
+1. **Reglas de Firestore**: copiar el contenido de `firestore.rules` en
+   Firebase Console → Firestore → Reglas → Publicar. La v4.0 restringe a los cajeros
+   a ver solo sus propias ventas y adelantos, y a registrar operaciones solo a su nombre.
+2. **Dominios autorizados**: Firebase Console → Authentication → Configuración →
+   Dominios autorizados → agregar `cassdev.com.ar`.
+3. **Restricción de la API key** (si existe): en Google Cloud Console → APIs y servicios →
+   Credenciales, si la clave web está restringida por referente HTTP, agregar
+   `https://cassdev.com.ar/*`.
 
-#### Para Apache (.htaccess):
-```apache
-RewriteEngine On
-RewriteRule ^se7en/(.*)$ /se7en/index.html [L]
-```
+No se necesitan índices compuestos nuevos: las consultas agregadas en v4.0 usan
+índices de un solo campo, que Firestore crea automáticamente.
 
-#### Para Nginx:
-```nginx
-location /se7en {
-    try_files $uri $uri/ /se7en/index.html;
-}
-```
+## 5. Verificación después de subir
 
-### 🔒 Variables de Entorno
+- [ ] Login de admin y de un cajero.
+- [ ] Clientes: el buscador encuentra clientes (con o sin acentos).
+- [ ] Registrar una venta y verificar que el cliente sume 1 punto.
+- [ ] Dashboard admin: "Total Clientes" muestra el total real.
+- [ ] F12 → Consola: sin errores en rojo.
+- [ ] F12 → Application → Service Workers: `sw.js` registrado con scope `/se7en/`.
 
-La aplicación está configurada con:
-- **Base URL**: `https://kioskito.click/se7en/`
-- **Environment**: Production
-- **Firebase**: Mantiene la configuración existente
+## 6. Cambios de la v4.0 relevantes para soporte
 
-### 📱 Características Mobile-Ready
+### "Quota exceeded" en una sola computadora
+Las versiones anteriores guardaban una copia diaria de todos los clientes en
+`localStorage` sin borrar las de días anteriores. Tras unas semanas se llenaba el
+límite del navegador (~5 MB) y aparecía `QuotaExceededError`. **No era la cuota de
+Firebase.** Desde la v4.0:
 
-✅ **Responsive Design** - Adaptable a cualquier dispositivo
-✅ **Touch Optimized** - Botones táctiles optimizados
-✅ **Progressive Web App (PWA)** - Se puede instalar como app nativa
-✅ **iOS Safari Compatible** - Funciona perfectamente en iPhone
-✅ **Offline Support** - Service Worker para funcionamiento básico offline
-✅ **App-like Experience** - Pantalla completa, sin barras del navegador
-✅ **Install Prompt** - Notificación inteligente para instalar
+- Al abrir la app se borran automáticamente los caches de días anteriores.
+- Si el almacenamiento se llena igual, la app sigue funcionando sin cache.
 
-### 🔧 Configuración Firebase
+### Consumo de lecturas de Firestore (plan Spark: 50.000/día)
+- La lista de clientes se descarga **una vez por día y por navegador**; después solo
+  se piden los clientes modificados (campo `updatedAt`).
+- El buscador de clientes filtra en memoria (antes descargaba la colección completa
+  en cada búsqueda).
+- El total de clientes usa una consulta de agregación (1 lectura cada 1.000 clientes).
+- El dashboard del admin solo pide las ventas nuevas desde la última consulta, con
+  una recarga completa por hora.
 
-La configuración de Firebase se mantiene intacta. Asegúrate de:
+Para revisar el consumo: Firebase Console → Firestore → Uso.
 
-1. Agregar `kioskito.click` a los dominios autorizados en Firebase Console
-2. Verificar que las reglas de Firestore permitan el acceso desde el nuevo dominio
+### Limitaciones conocidas
+- Un cliente eliminado desde una computadora puede seguir apareciendo en el buscador
+  de otras hasta el día siguiente (solo el admin elimina clientes).
+- Los clientes creados antes de la v4.0 no tienen `updatedAt`; se incluyen igual en la
+  descarga diaria y lo reciben en su próxima modificación.
 
-### 🚀 Deploy Steps
+## 7. Desarrollo local con emuladores (opcional)
 
-1. **Build del proyecto**:
-   ```bash
-   npm run build
-   ```
-
-2. **Subir archivos**: Subir todo el contenido de la carpeta `dist/` al directorio `/se7en/` en el servidor
-
-3. **Configurar redirects**: Asegurar que el servidor redirige todas las rutas SPA correctamente
-
-4. **Verificar SSL**: Confirmar que HTTPS esté habilitado en kioskito.click
-
-### ✅ Testing Checklist
-
-**Funcionalidad Básica:**
-- [ ] Login funciona correctamente
-- [ ] Navegación entre páginas
-- [ ] Sidebar móvil funciona
-- [ ] Imágenes se cargan correctamente
-- [ ] Firebase conecta sin errores
-- [ ] Rutas SPA redirigen apropiadamente
-
-**PWA y Mobile:**
-- [ ] Manifest.json se carga correctamente
-- [ ] Service Worker se registra sin errores
-- [ ] Prompt de instalación aparece en dispositivos compatibles
-- [ ] App funciona offline básicamente
-- [ ] Botón de logout accesible en móviles
-- [ ] Safe area respetada en dispositivos con notch
-- [ ] Error boundaries funcionan correctamente
-
-### 📞 Soporte
-
-Para cualquier problema durante el despliegue, verificar:
-1. Configuración del servidor web
-2. Dominios autorizados en Firebase
-3. Rutas de assets correctas
-
----
-**Sistema desarrollado para Se7en Barbershop**
-*Powered by Sistema Kioskito* 
+Con `VITE_USE_FIREBASE_EMULATORS=true` en `.env.development.local`, `npm run dev`
+se conecta a los emuladores locales de Auth (9099) y Firestore (8080) en lugar del
+proyecto real. Esta opción no tiene efecto en el build de producción.

@@ -4,6 +4,7 @@ import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { loginUser } from '../../firebase/auth';
 import toast from 'react-hot-toast';
+import { getFriendlyErrorMessage } from '../../utils/firebaseErrors';
 import { useNavigate } from 'react-router-dom';
 import logoSe7en from '../../assets/logo-se7en.jpeg';
 
@@ -23,49 +24,15 @@ export const LoginForm: React.FC = () => {
     formState: { errors }
   } = useForm<LoginForm>();
 
-  const getErrorMessage = (error: any) => {
-    const errorCode = error.code || '';
-    const errorMessage = error.message || '';
-
-    // Mapear códigos de error de Firebase a mensajes amigables
-    if (errorCode.includes('auth/user-not-found') || 
-        errorCode.includes('auth/wrong-password') ||
-        errorCode.includes('auth/invalid-credential') ||
-        errorMessage.includes('invalid-email') ||
-        errorMessage.includes('user-not-found') ||
-        errorMessage.includes('wrong-password')) {
-      return 'Credenciales incorrectas. Verifica tu email y contraseña.';
-    }
-    
-    if (errorCode.includes('auth/invalid-email')) {
-      return 'El formato del email no es válido.';
-    }
-    
-    if (errorCode.includes('auth/user-disabled')) {
-      return 'Esta cuenta ha sido deshabilitada.';
-    }
-    
-    if (errorCode.includes('auth/too-many-requests')) {
-      return 'Demasiados intentos fallidos. Inténtalo más tarde.';
-    }
-
-    if (errorCode.includes('auth/network-request-failed')) {
-      return 'Error de conexión. Verifica tu internet.';
-    }
-
-    // Fallback para errores no específicos
-    return 'Credenciales incorrectas. Verifica tu email y contraseña.';
-  };
-
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
       await loginUser(data.email, data.password);
       toast.success('¡Bienvenido!');
       navigate('/dashboard');
-    } catch (error: any) {
+    } catch (error) {
       console.error('Login error:', error);
-      const friendlyMessage = getErrorMessage(error);
+      const friendlyMessage = getFriendlyErrorMessage(error);
       toast.error(friendlyMessage);
     } finally {
       setIsLoading(false);

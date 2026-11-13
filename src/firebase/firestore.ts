@@ -9,13 +9,18 @@ import {
   where,
   orderBy,
   limit,
-  startAfter,
   Timestamp,
   getDoc,
-  Query,
-  DocumentSnapshot
+  startAfter,
+  getCountFromServer,
+  serverTimestamp,
+  increment,
+  writeBatch,
+  runTransaction,
+  DocumentData
 } from 'firebase/firestore';
 import { db } from './config';
+import { safeGetItem, safeGetJSON, safeSetItem, safeRemoveItem, purgeStaleDailyCaches, purgeAppCaches } from '../utils/safeStorage';
 import { User } from 'firebase/auth';
 import { UserProfile } from './auth';
 
@@ -30,7 +35,13 @@ export interface Cliente {
   puntos: number; // Puntos acumulados
   puntosCanjeados: number; // Puntos ya utilizados
   createdAt: Date;
+  updatedAt?: Date; // Lo escribe el servidor; se usa para la sincronización incremental
 }
+
+/** Datos para crear un cliente: puntos y fechas los asigna el sistema. */
+export type NuevoCliente = Omit<Cliente, 'id' | 'createdAt' | 'updatedAt' | 'puntos' | 'puntosCanjeados' | 'visitas'> & {
+  visitas?: number;
+};
 
 export interface Servicio {
   id?: string;
@@ -141,189 +152,229 @@ export interface MovimientoPuntos {
   createdAt: Date;
 }
 
-// Clientes
-export const createCliente = async (cliente: Omit<Cliente, 'id' | 'createdAt'>) => {
-  try {
-    const docRef = await addDoc(collection(db, 'clientes'), {
-      ...cliente,
-      puntos: 0,
-      puntosCanjeados: 0,
-      createdAt: Timestamp.fromDate(new Date())
-    });
-    
-    // Limpiar TODOS los caches de clientes cuando se crea uno nuevo
-    const today = new Date().toDateString();
-    
-    // Cache del contador
-    localStorage.removeItem('clientes-count');
-    localStorage.removeItem('clientes-count-time');
-    
-    // Cache de lista completa (para ventas)
-    localStorage.removeItem(`clientes-todos-${today}`);
-    localStorage.removeItem(`clientes-todos-time-${today}`);
-    
-    // Cache de dashboard
-    localStorage.removeItem('dashboard-admin');
-    localStorage.removeItem('dashboard-time-admin');
-    
-    console.log('🧹 Todos los caches de clientes limpiados por nuevo cliente');
-    
-    return docRef.id;
-  } catch (error) {
-    console.error('Error creating cliente:', error);
-    throw new Error('Error creando cliente');
-  }
+// ============ CLIENTES ============
+//
+// Estrategia de cache (para no agotar las 50K lecturas/día del plan Spark):
+// - Una vez por día y por navegador se descarga la lista completa de clientes
+//   y se guarda en localStorage (clave "clientes-todos-<fecha>").
+// - Después, cada llamada a getClientes() solo pide a Firestore los clientes
+//   modificados desde la última sincronización (campo `updatedAt`, que se
+//   escribe con serverTimestamp() en cada alta/modificación). Si no hubo
+//   cambios, cuesta 1 lectura.
+// - La sincronización incremental se hace como máximo una vez por minuto,
+//   salvo que esta misma pestaña haya modificado clientes.
+// - Limitación conocida: un cliente eliminado desde otra computadora sigue
+//   apareciendo en las demás hasta el día siguiente (solo admin elimina).
+
+type ClienteCacheRow = Omit<Cliente, 'createdAt' | 'ultimaVisita'> & {
+  createdAt: string;
+  ultimaVisita?: string;
 };
 
-// Función para obtener TODOS los clientes (para formularios y búsquedas)
-// Función para obtener TODOS los clientes CON CACHE DIARIO (para formularios de ventas)
+interface ClientesCache {
+  key: string;            // clave del día al que pertenece
+  list: Cliente[];
+  lastSyncMillis: number; // mayor updatedAt (hora del servidor) visto
+  lastCheckAt: number;    // última vez que se consultó el delta (hora local)
+}
+
+const CLIENTES_DELTA_INTERVAL_MS = 60 * 1000;
+// Margen para tolerar escrituras con la misma marca de tiempo.
+const CLIENTES_SYNC_MARGIN_MS = 1000;
+
+const clientesCacheKey = () => `clientes-todos-${new Date().toDateString()}`;
+const clientesSyncKey = () => `clientes-todos-time-${new Date().toDateString()}`;
+
+let clientesMem: ClientesCache | null = null;
+let clientesInFlight: Promise<Cliente[]> | null = null;
+
+const toDateOrUndefined = (value: unknown): Date | undefined => {
+  if (value instanceof Timestamp) return value.toDate();
+  if (value instanceof Date) return value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? undefined : d;
+  }
+  return undefined;
+};
+
+const mapClienteDoc = (id: string, data: DocumentData): Cliente => ({
+  ...(data as Cliente),
+  id,
+  visitas: data.visitas || 0,
+  puntos: data.puntos || 0,
+  puntosCanjeados: data.puntosCanjeados || 0,
+  createdAt: toDateOrUndefined(data.createdAt) || new Date(),
+  ultimaVisita: toDateOrUndefined(data.ultimaVisita),
+  updatedAt: toDateOrUndefined(data.updatedAt),
+});
+
+const sortClientes = (list: Cliente[]) =>
+  list.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+const persistClientesCache = (cache: ClientesCache) => {
+  purgeStaleDailyCaches();
+  safeSetItem(cache.key, JSON.stringify(cache.list));
+  safeSetItem(clientesSyncKey(), String(cache.lastSyncMillis));
+};
+
+const loadClientesCacheFromStorage = (): ClientesCache | null => {
+  const key = clientesCacheKey();
+  const rows = safeGetJSON<ClienteCacheRow[]>(key);
+  const lastSyncMillis = Number(safeGetItem(clientesSyncKey()));
+  if (!Array.isArray(rows) || !Number.isFinite(lastSyncMillis)) return null;
+  return {
+    key,
+    list: rows.map((r) => mapClienteDoc(r.id as string, r)),
+    lastSyncMillis,
+    lastCheckAt: 0,
+  };
+};
+
+const maxUpdatedAt = (list: Cliente[], initial = 0) =>
+  list.reduce((max, c) => Math.max(max, c.updatedAt?.getTime() || 0), initial);
+
+const fetchAllClientes = async (): Promise<ClientesCache> => {
+  console.log('👥 Descargando lista completa de clientes (1 vez por día)');
+  const snapshot = await getDocs(collection(db, 'clientes'));
+  const list = sortClientes(snapshot.docs.map((d) => mapClienteDoc(d.id, d.data())));
+  return {
+    key: clientesCacheKey(),
+    list,
+    lastSyncMillis: maxUpdatedAt(list),
+    lastCheckAt: Date.now(),
+  };
+};
+
+const syncClientesDelta = async (cache: ClientesCache): Promise<ClientesCache> => {
+  const desde = Timestamp.fromMillis(Math.max(0, cache.lastSyncMillis - CLIENTES_SYNC_MARGIN_MS));
+  const snapshot = await getDocs(
+    query(collection(db, 'clientes'), where('updatedAt', '>', desde))
+  );
+  if (snapshot.empty) return { ...cache, lastCheckAt: Date.now() };
+
+  const byId = new Map(cache.list.map((c) => [c.id, c]));
+  const cambios = snapshot.docs.map((d) => mapClienteDoc(d.id, d.data()));
+  cambios.forEach((c) => byId.set(c.id, c));
+  console.log(`👥 ${cambios.length} cliente(s) actualizados desde la última sincronización`);
+  return {
+    ...cache,
+    list: sortClientes(Array.from(byId.values())),
+    lastSyncMillis: maxUpdatedAt(cambios, cache.lastSyncMillis),
+    lastCheckAt: Date.now(),
+  };
+};
+
+/** Fuerza a que la próxima llamada a getClientes() consulte cambios. */
+const markClientesDirty = () => {
+  if (clientesMem) clientesMem = { ...clientesMem, lastCheckAt: 0 };
+};
+
+const doGetClientes = async (): Promise<Cliente[]> => {
+  const key = clientesCacheKey();
+  let cache = clientesMem && clientesMem.key === key ? clientesMem : loadClientesCacheFromStorage();
+
+  if (!cache) {
+    cache = await fetchAllClientes();
+    persistClientesCache(cache);
+  } else if (Date.now() - cache.lastCheckAt > CLIENTES_DELTA_INTERVAL_MS) {
+    const updated = await syncClientesDelta(cache);
+    if (updated.list !== cache.list) persistClientesCache(updated);
+    cache = updated;
+  }
+
+  clientesMem = cache;
+  return cache.list;
+};
+
+/**
+ * Lista completa de clientes ordenada por nombre (usa cache diario + sincronización
+ * incremental). Devuelve una copia para que los componentes no muten el cache.
+ */
 export const getClientes = async (): Promise<Cliente[]> => {
   try {
-    const cacheKey = `clientes-todos-${new Date().toDateString()}`;
-    const cacheTimeKey = `clientes-todos-time-${new Date().toDateString()}`;
-    const cached = localStorage.getItem(cacheKey);
-    const cacheTime = localStorage.getItem(cacheTimeKey);
-    
-    // Cache válido por 1 día (hasta medianoche)
-    const now = new Date();
-    const midnight = new Date(now);
-    midnight.setHours(23, 59, 59, 999);
-    
-    if (cached && cacheTime && Date.now() < midnight.getTime()) {
-      const clientesFromCache = JSON.parse(cached);
-      console.log(`👥 Usando lista completa de clientes desde cache diario (${clientesFromCache.length} clientes) - AHORRO DE LECTURAS`);
-      return clientesFromCache;
+    // Evita consultas duplicadas si varias pantallas piden la lista a la vez.
+    if (!clientesInFlight) {
+      clientesInFlight = doGetClientes().finally(() => {
+        clientesInFlight = null;
+      });
     }
-    
-    // Cache expirado o no existe - consultar Firebase
-    console.log('👥 Consultando lista completa de clientes desde Firebase (primera vez del día) - USANDO LECTURAS');
-    
-    // Intentar ordenar por nombre, si falla usar createdAt
-    let querySnapshot;
-    try {
-      querySnapshot = await getDocs(
-        query(collection(db, 'clientes'), orderBy('nombre', 'asc'))
-      );
-    } catch (indexError) {
-      console.log('Índice por nombre no disponible, usando createdAt');
-      querySnapshot = await getDocs(
-        query(collection(db, 'clientes'), orderBy('createdAt', 'desc'))
-      );
-    }
-    
-    let clientes = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        ultimaVisita: data.ultimaVisita?.toDate() || undefined
-      } as Cliente;
-    });
-    
-    // Ordenar por nombre en el cliente si no se pudo hacer en la consulta
-    clientes.sort((a, b) => a.nombre.localeCompare(b.nombre));
-    
-    // Guardar en cache hasta medianoche
-    localStorage.setItem(cacheKey, JSON.stringify(clientes));
-    localStorage.setItem(cacheTimeKey, Date.now().toString());
-    
-    return clientes;
+    return [...(await clientesInFlight)];
   } catch (error) {
     console.error('Error getting clientes:', error);
     throw new Error('Error obteniendo clientes');
   }
 };
 
-// Función para obtener clientes con paginación (solo para listas)
-export const getClientesPaginados = async (limitCount = 20, searchTerm?: string): Promise<Cliente[]> => {
-  try {
-    let querySnapshot;
-    
-    if (searchTerm && searchTerm.trim() !== '') {
-      // Si hay búsqueda, cargar TODOS los clientes para filtrar
-      try {
-        querySnapshot = await getDocs(
-          query(collection(db, 'clientes'), orderBy('nombre', 'asc'))
-        );
-      } catch (indexError) {
-        console.log('Índice por nombre no disponible, usando createdAt para búsqueda');
-        querySnapshot = await getDocs(
-          query(collection(db, 'clientes'), orderBy('createdAt', 'desc'))
-        );
-      }
-    } else {
-      // Sin búsqueda, solo cargar los últimos 20 por fecha de creación
-      querySnapshot = await getDocs(
-        query(collection(db, 'clientes'), orderBy('createdAt', 'desc'), limit(limitCount))
-      );
-    }
-    
-    let clientes = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        ultimaVisita: data.ultimaVisita?.toDate() || undefined
-      } as Cliente;
+const normalizar = (texto: string) =>
+  texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/** Filtra clientes en memoria por nombre, teléfono, email o DNI. */
+export const filtrarClientes = (clientes: Cliente[], searchTerm: string): Cliente[] => {
+  const term = normalizar(searchTerm.trim());
+  if (!term) return clientes;
+  return clientes
+    .filter(
+      (c) =>
+        normalizar(c.nombre || '').includes(term) ||
+        (c.telefono || '').includes(searchTerm.trim()) ||
+        normalizar(c.email || '').includes(term) ||
+        (c.dni || '').includes(searchTerm.trim())
+    )
+    .sort((a, b) => {
+      const aStarts = normalizar(a.nombre || '').startsWith(term);
+      const bStarts = normalizar(b.nombre || '').startsWith(term);
+      if (aStarts !== bStarts) return aStarts ? -1 : 1;
+      return (a.nombre || '').localeCompare(b.nombre || '');
     });
-    
-    // Filtrar por término de búsqueda si existe
+};
+
+// Clientes para la pantalla de listado.
+// - Con búsqueda: filtra en memoria sobre la lista cacheada (antes descargaba
+//   TODA la colección en cada búsqueda).
+// - Sin búsqueda: los últimos `limitCount` creados.
+// - `despuesDe`: para "cargar más", continúa después del cliente con esa fecha de alta.
+export const getClientesPaginados = async (
+  limitCount = 20,
+  searchTerm?: string,
+  despuesDe?: Date
+): Promise<Cliente[]> => {
+  try {
     if (searchTerm && searchTerm.trim() !== '') {
-      const searchLower = searchTerm.toLowerCase();
-      clientes = clientes.filter(cliente => 
-        cliente.nombre.toLowerCase().includes(searchLower) ||
-        cliente.telefono.includes(searchTerm) ||
-        (cliente.email && cliente.email.toLowerCase().includes(searchLower)) ||
-        (cliente.dni && cliente.dni.includes(searchTerm))
-      );
-      
-      // Reordenar por relevancia: coincidencias exactas primero
-      clientes.sort((a, b) => {
-        const aNameMatch = a.nombre.toLowerCase().startsWith(searchLower);
-        const bNameMatch = b.nombre.toLowerCase().startsWith(searchLower);
-        
-        if (aNameMatch && !bNameMatch) return -1;
-        if (!aNameMatch && bNameMatch) return 1;
-        
-        return a.nombre.localeCompare(b.nombre);
-      });
-    } else {
-      // Sin búsqueda, ordenar por fecha de creación (más recientes primero)
-      clientes.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      return filtrarClientes(await getClientes(), searchTerm);
     }
-    
-    return clientes;
+
+    const base = query(collection(db, 'clientes'), orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(
+      despuesDe
+        ? query(base, startAfter(Timestamp.fromDate(despuesDe)), limit(limitCount))
+        : query(base, limit(limitCount))
+    );
+    return snapshot.docs.map((d) => mapClienteDoc(d.id, d.data()));
   } catch (error) {
     console.error('Error getting clientes paginados:', error);
     throw new Error('Error obteniendo clientes paginados');
   }
 };
 
-// Función para contar el total de clientes CON CACHE
+// Total de clientes con consulta de agregación (cuesta 1 lectura cada 1000
+// clientes, en lugar de 1 lectura por cliente). Cache de 6 horas.
 export const getClientesCount = async (): Promise<number> => {
   try {
     const cacheKey = 'clientes-count';
     const cacheTimeKey = 'clientes-count-time';
-    const cached = localStorage.getItem(cacheKey);
-    const cacheTime = localStorage.getItem(cacheTimeKey);
-    
-    // Cache válido por 6 horas (21,600,000 ms)
-    if (cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 6 * 60 * 60 * 1000) {
-      console.log('📊 Usando contador de clientes desde cache');
-      return parseInt(cached);
+    const cached = safeGetItem(cacheKey);
+    const cacheTime = Number(safeGetItem(cacheTimeKey));
+
+    if (cached && cacheTime && Date.now() - cacheTime < 6 * 60 * 60 * 1000) {
+      return parseInt(cached, 10) || 0;
     }
-    
-    // Cache expirado o no existe - consultar Firebase
-    console.log('📊 Consultando contador de clientes desde Firebase');
-    const querySnapshot = await getDocs(collection(db, 'clientes'));
-    const count = querySnapshot.size;
-    
-    // Guardar en cache
-    localStorage.setItem(cacheKey, count.toString());
-    localStorage.setItem(cacheTimeKey, Date.now().toString());
-    
+
+    const snapshot = await getCountFromServer(collection(db, 'clientes'));
+    const count = snapshot.data().count;
+
+    safeSetItem(cacheKey, count.toString());
+    safeSetItem(cacheTimeKey, Date.now().toString());
     return count;
   } catch (error) {
     console.error('Error counting clientes:', error);
@@ -331,21 +382,47 @@ export const getClientesCount = async (): Promise<number> => {
   }
 };
 
+const invalidateClientesCount = () => {
+  safeRemoveItem('clientes-count');
+  safeRemoveItem('clientes-count-time');
+};
+
+export const createCliente = async (cliente: NuevoCliente) => {
+  try {
+    // Firestore rechaza campos undefined (p. ej. dni vacío): se omiten.
+    const datos = Object.fromEntries(
+      Object.entries(cliente).filter(([, v]) => v !== undefined)
+    );
+    const docRef = await addDoc(collection(db, 'clientes'), {
+      ...datos,
+      visitas: cliente.visitas || 0,
+      puntos: 0,
+      puntosCanjeados: 0,
+      createdAt: Timestamp.fromDate(new Date()),
+      updatedAt: serverTimestamp(),
+    });
+    invalidateClientesCount();
+    markClientesDirty();
+    return docRef.id;
+  } catch (error) {
+    console.error('Error creating cliente:', error);
+    throw new Error('Error creando cliente');
+  }
+};
+
 export const updateCliente = async (id: string, cliente: Partial<Cliente>) => {
   try {
-    const updateData = { ...cliente };
-    if (updateData.ultimaVisita) {
-      updateData.ultimaVisita = Timestamp.fromDate(updateData.ultimaVisita as Date) as any;
+    // No se permite sobrescribir id ni fechas de sistema; Firestore rechaza undefined.
+    const camposSistema = ['id', 'createdAt', 'updatedAt'];
+    const updateData: DocumentData = Object.fromEntries(
+      Object.entries(cliente).filter(([k, v]) => v !== undefined && !camposSistema.includes(k))
+    );
+    if (cliente.ultimaVisita instanceof Date) {
+      updateData.ultimaVisita = Timestamp.fromDate(cliente.ultimaVisita);
     }
+    updateData.updatedAt = serverTimestamp();
     await updateDoc(doc(db, 'clientes', id), updateData);
-    
-    // Limpiar cache de lista completa cuando se modifica un cliente
-    const today = new Date().toDateString();
-    localStorage.removeItem(`clientes-todos-${today}`);
-    localStorage.removeItem(`clientes-todos-time-${today}`);
-    
-    console.log('🧹 Cache de lista de clientes limpiado por actualización');
-    
+    markClientesDirty();
   } catch (error) {
     console.error('Error updating cliente:', error);
     throw new Error('Error actualizando cliente');
@@ -355,6 +432,12 @@ export const updateCliente = async (id: string, cliente: Partial<Cliente>) => {
 export const deleteCliente = async (id: string) => {
   try {
     await deleteDoc(doc(db, 'clientes', id));
+    // La sincronización incremental no detecta borrados: quitarlo del cache local.
+    if (clientesMem) {
+      clientesMem = { ...clientesMem, list: clientesMem.list.filter((c) => c.id !== id) };
+      persistClientesCache(clientesMem);
+    }
+    invalidateClientesCount();
   } catch (error) {
     console.error('Error deleting cliente:', error);
     throw new Error('Error eliminando cliente');
@@ -368,6 +451,7 @@ export const createServicio = async (servicio: Omit<Servicio, 'id' | 'createdAt'
       ...servicio,
       createdAt: Timestamp.fromDate(new Date())
     });
+    clearServiciosCache();
     return docRef.id;
   } catch (error) {
     console.error('Error creating servicio:', error);
@@ -380,13 +464,13 @@ export const getServiciosActivos = async (): Promise<Servicio[]> => {
   try {
     const cacheKey = 'servicios-activos';
     const cacheTimeKey = 'servicios-activos-time';
-    const cached = localStorage.getItem(cacheKey);
-    const cacheTime = localStorage.getItem(cacheTimeKey);
+    const cached = safeGetJSON<Servicio[]>(cacheKey);
+    const cacheTime = safeGetItem(cacheTimeKey);
     
-    // Cache válido por 1 día (86,400,000 ms)
-    if (cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 24 * 60 * 60 * 1000) {
-      console.log('🔧 Usando servicios activos desde cache');
-      return JSON.parse(cached);
+    // Cache válido por 1 hora: son pocos documentos y así los cambios del
+    // admin llegan a las demás computadoras sin esperar un día.
+    if (cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 60 * 60 * 1000) {
+      return cached;
     }
     
     // Cache expirado o no existe - consultar Firebase
@@ -405,8 +489,8 @@ export const getServiciosActivos = async (): Promise<Servicio[]> => {
     });
     
     // Guardar en cache
-    localStorage.setItem(cacheKey, JSON.stringify(servicios));
-    localStorage.setItem(cacheTimeKey, Date.now().toString());
+    safeSetItem(cacheKey, JSON.stringify(servicios));
+    safeSetItem(cacheTimeKey, Date.now().toString());
     
     return servicios;
   } catch (error) {
@@ -449,6 +533,7 @@ export const getServicios = async (): Promise<Servicio[]> => {
 export const updateServicio = async (id: string, servicio: Partial<Servicio>) => {
   try {
     await updateDoc(doc(db, 'servicios', id), servicio);
+    clearServiciosCache();
   } catch (error) {
     console.error('Error updating servicio:', error);
     throw new Error('Error actualizando servicio');
@@ -456,64 +541,57 @@ export const updateServicio = async (id: string, servicio: Partial<Servicio>) =>
 };
 
 // Ventas
+// La venta, la suma de visita/punto del cliente y el movimiento de puntos se
+// escriben en un único batch: o se guardan todos o ninguno.
 export const createVenta = async (data: Omit<Venta, 'id' | 'createdAt' | 'cajeroId' | 'cajeroEmail'>, user: User) => {
   try {
     if (!user?.uid || !user.email) {
-      console.error("❌ Datos del cajero faltantes: ", user);
       throw new Error("Información del cajero no disponible");
     }
 
-    const ventaDoc = {
+    const ventaRef = doc(collection(db, 'ventas'));
+    const cajeroNombre = data.cajeroNombre && data.cajeroNombre !== 'Desconocido' ? data.cajeroNombre : user.email || 'N/A';
+    const ahora = Timestamp.fromDate(new Date());
+
+    const batch = writeBatch(db);
+    batch.set(ventaRef, {
       ...data,
       cajeroId: user.uid,
-      cajeroNombre: data.cajeroNombre && data.cajeroNombre !== 'Desconocido' ? data.cajeroNombre : user.email || 'N/A',
+      cajeroNombre,
       cajeroEmail: user.email,
       fecha: Timestamp.fromDate(data.fecha),
-      createdAt: Timestamp.fromDate(new Date()),
-    };
+      createdAt: ahora,
+    });
 
-    console.log('✅ Creando venta con datos:', ventaDoc);
-
-    const docRef = await addDoc(collection(db, 'ventas'), ventaDoc);
-    
-    // Limpiar cache del dashboard para que se actualice con la nueva venta
-    localStorage.removeItem('dashboard-admin');
-    localStorage.removeItem('dashboard-time-admin');
-    localStorage.removeItem(`dashboard-${user.uid}`);
-    localStorage.removeItem(`dashboard-time-${user.uid}`);
-    console.log('🧹 Cache del dashboard limpiado por nueva venta');
-    
-    // Actualizar contador de visitas y puntos del cliente
+    // Solo sumar puntos si el cliente todavía existe (puede venir de un cache viejo).
     const clienteRef = doc(db, 'clientes', data.clienteId);
     const clienteDoc = await getDoc(clienteRef);
-    
     if (clienteDoc.exists()) {
-      const clienteData = clienteDoc.data() as Cliente;
-      const nuevosVisitas = (clienteData.visitas || 0) + 1;
-      const nuevosPuntos = (clienteData.puntos || 0) + 1; // +1 punto por corte
-      
-      await updateDoc(clienteRef, {
-        visitas: nuevosVisitas,
-        puntos: nuevosPuntos,
-        ultimaVisita: Timestamp.fromDate(new Date())
+      batch.update(clienteRef, {
+        visitas: increment(1),
+        puntos: increment(1), // +1 punto por corte
+        ultimaVisita: ahora,
+        updatedAt: serverTimestamp(),
       });
-
-      // Registrar movimiento de puntos
-      await addDoc(collection(db, 'movimientos_puntos'), {
+      batch.set(doc(collection(db, 'movimientos_puntos')), {
         clienteId: data.clienteId,
         clienteNombre: data.clienteNombre,
         tipo: 'ganados',
         puntos: 1,
         motivo: `Corte: ${data.servicioNombre}`,
-        ventaId: docRef.id,
+        ventaId: ventaRef.id,
         cajeroId: user.uid,
-        cajeroNombre: ventaDoc.cajeroNombre,
-        fecha: Timestamp.fromDate(new Date()),
-        createdAt: Timestamp.fromDate(new Date())
+        cajeroNombre,
+        fecha: ahora,
+        createdAt: ahora,
       });
     }
-    
-    return docRef.id;
+
+    await batch.commit();
+
+    invalidateDashboardCache(user.uid);
+    markClientesDirty();
+    return ventaRef.id;
   } catch (error) {
     console.error('Error creating venta:', error);
     throw new Error('Error creando venta');
@@ -522,8 +600,7 @@ export const createVenta = async (data: Omit<Venta, 'id' | 'createdAt' | 'cajero
 
 export const getVentas = async (cajeroId?: string, fechaInicio?: Date, fechaFin?: Date, limitCount = 20, searchTerm?: string): Promise<Venta[]> => {
   try {
-    let ventasRef: Query<Venta> = collection(db, 'ventas') as Query<Venta>;
-    let q = query(ventasRef, orderBy('fecha', 'desc'));
+    let q = query(collection(db, 'ventas'), orderBy('fecha', 'desc'));
     
     // Si hay filtros específicos (fechas, cajero, búsqueda), cargar todos los datos
     const hasFilters = cajeroId || fechaInicio || fechaFin || (searchTerm && searchTerm.trim() !== '');
@@ -546,25 +623,8 @@ export const getVentas = async (cajeroId?: string, fechaInicio?: Date, fechaFin?
     }
 
     const querySnapshot = await getDocs(q);
-    let ventas = querySnapshot.docs.map(doc => {
-      const rawData = doc.data();
-      const venta: Venta = {
-        id: doc.id,
-        clienteId: rawData.clienteId as string,
-        clienteNombre: rawData.clienteNombre as string,
-        servicioId: rawData.servicioId as string,
-        servicioNombre: rawData.servicioNombre as string,
-        precio: Number(rawData.precio),
-        metodoPago: (rawData.metodoPago as 'efectivo' | 'transferencia') || 'efectivo',
-        cajeroId: rawData.cajeroId as string,
-        cajeroNombre: rawData.cajeroNombre as string,
-        cajeroEmail: (rawData.cajeroEmail as string) || '',
-        fecha: (rawData.fecha instanceof Timestamp) ? rawData.fecha.toDate() : new Date('Invalid Date'),
-        createdAt: (rawData.createdAt instanceof Timestamp) ? rawData.createdAt.toDate() : new Date('Invalid Date'),
-      };
-      return venta;
-    });
-    
+    let ventas = querySnapshot.docs.map((d) => mapVentaDoc(d.id, d.data()));
+
     // Filtrar por término de búsqueda si existe
     if (searchTerm && searchTerm.trim() !== '') {
       const searchLower = searchTerm.toLowerCase();
@@ -585,6 +645,8 @@ export const getVentas = async (cajeroId?: string, fechaInicio?: Date, fechaFin?
 export const deleteVenta = async (id: string) => {
   try {
     await deleteDoc(doc(db, 'ventas', id));
+    // Forzar recarga completa del dashboard admin (el delta no detecta borrados).
+    safeRemoveItem(dashboardKey());
   } catch (error) {
     console.error('Error deleting venta:', error);
     throw new Error('Error eliminando venta');
@@ -687,6 +749,7 @@ export const deleteServicio = async (id: string) => {
     // En lugar de eliminar completamente, marcar como inactivo
     // Esto mantiene la integridad referencial con turnos y ventas existentes
     await updateDoc(doc(db, 'servicios', id), { activo: false });
+    clearServiciosCache();
   } catch (error) {
     console.error('Error deleting servicio:', error);
     throw new Error('Error eliminando servicio');
@@ -700,7 +763,7 @@ export const createCajero = async (cajero: Omit<UserProfile, 'uid' | 'createdAt'
     const docRef = await addDoc(collection(db, 'users'), {
       ...cajero,
       createdAt: Timestamp.fromDate(new Date()),
-      role: 'cajero' // Asegurar que el rol sea 'cajero'
+      role: 'cashier' // Rol que usa la app para cajeros (ver normalizeProfile)
     });
     return docRef.id;
   } catch (error) {
@@ -1175,66 +1238,72 @@ export const deletePremio = async (id: string) => {
 };
 
 // Canjes
+// Transacción: si dos cajeros canjean a la vez, Firestore reintenta y vuelve a
+// validar los puntos, evitando saldos negativos o canjes duplicados.
 export const canjearPuntos = async (clienteId: string, premioId: string, user: User) => {
   try {
-    // Obtener datos del cliente y premio
-    const clienteDoc = await getDoc(doc(db, 'clientes', clienteId));
-    const premioDoc = await getDoc(doc(db, 'premios', premioId));
-    
-    if (!clienteDoc.exists() || !premioDoc.exists()) {
-      throw new Error('Cliente o premio no encontrado');
-    }
-    
-    const clienteData = clienteDoc.data() as Cliente;
-    const premioData = premioDoc.data() as Premio;
-    
-    // Verificar puntos suficientes
-    if (clienteData.puntos < premioData.puntosRequeridos) {
-      throw new Error('Puntos insuficientes');
-    }
-    
-    // Crear registro de canje
-    const canjeDoc = {
-      clienteId,
-      clienteNombre: clienteData.nombre,
-      premioId,
-      premioNombre: premioData.nombre,
-      puntosUtilizados: premioData.puntosRequeridos,
-      cajeroId: user.uid,
-      cajeroNombre: user.email || 'N/A',
-      fecha: Timestamp.fromDate(new Date()),
-      estado: 'canjeado' as const,
-      createdAt: Timestamp.fromDate(new Date())
-    };
-    
-    const canjeRef = await addDoc(collection(db, 'canjes_puntos'), canjeDoc);
-    
-    // Restar solo los puntos del premio, conservar el resto
-    const puntosRestantes = clienteData.puntos - premioData.puntosRequeridos;
-    const nuevosPuntosCanjeados = (clienteData.puntosCanjeados || 0) + premioData.puntosRequeridos;
-    
-    await updateDoc(doc(db, 'clientes', clienteId), {
-      puntos: puntosRestantes,
-      puntosCanjeados: nuevosPuntosCanjeados
+    const clienteRef = doc(db, 'clientes', clienteId);
+    const premioRef = doc(db, 'premios', premioId);
+    const canjeRef = doc(collection(db, 'canjes_puntos'));
+    const movimientoRef = doc(collection(db, 'movimientos_puntos'));
+
+    await runTransaction(db, async (tx) => {
+      const [clienteDoc, premioDoc] = await Promise.all([tx.get(clienteRef), tx.get(premioRef)]);
+
+      if (!clienteDoc.exists() || !premioDoc.exists()) {
+        throw new Error('Cliente o premio no encontrado');
+      }
+
+      const clienteData = clienteDoc.data() as Cliente;
+      const premioData = premioDoc.data() as Premio;
+
+      if (!premioData.activo) {
+        throw new Error('El premio no está activo');
+      }
+      if ((clienteData.puntos || 0) < premioData.puntosRequeridos) {
+        throw new Error('Puntos insuficientes');
+      }
+
+      const ahora = Timestamp.fromDate(new Date());
+      const cajeroNombre = user.email || 'N/A';
+
+      tx.set(canjeRef, {
+        clienteId,
+        clienteNombre: clienteData.nombre,
+        premioId,
+        premioNombre: premioData.nombre,
+        puntosUtilizados: premioData.puntosRequeridos,
+        cajeroId: user.uid,
+        cajeroNombre,
+        fecha: ahora,
+        estado: 'canjeado',
+        createdAt: ahora,
+      });
+      tx.update(clienteRef, {
+        puntos: increment(-premioData.puntosRequeridos),
+        puntosCanjeados: increment(premioData.puntosRequeridos),
+        updatedAt: serverTimestamp(),
+      });
+      tx.set(movimientoRef, {
+        clienteId,
+        clienteNombre: clienteData.nombre,
+        tipo: 'canjeados',
+        puntos: -premioData.puntosRequeridos,
+        motivo: `Canje: ${premioData.nombre}`,
+        canjeId: canjeRef.id,
+        cajeroId: user.uid,
+        cajeroNombre,
+        fecha: ahora,
+        createdAt: ahora,
+      });
     });
-    
-    // Registrar movimiento de puntos
-    await addDoc(collection(db, 'movimientos_puntos'), {
-      clienteId,
-      clienteNombre: clienteData.nombre,
-      tipo: 'canjeados',
-      puntos: -premioData.puntosRequeridos, // Solo los puntos del premio
-      motivo: `Canje: ${premioData.nombre}`,
-      canjeId: canjeRef.id,
-      cajeroId: user.uid,
-      cajeroNombre: user.email || 'N/A',
-      fecha: Timestamp.fromDate(new Date()),
-      createdAt: Timestamp.fromDate(new Date())
-    });
-    
+
+    markClientesDirty();
     return canjeRef.id;
   } catch (error) {
     console.error('Error canjeando puntos:', error);
+    const conocidos = ['Puntos insuficientes', 'Cliente o premio no encontrado', 'El premio no está activo'];
+    if (error instanceof Error && conocidos.includes(error.message)) throw error;
     throw new Error('Error canjeando puntos');
   }
 };
@@ -1289,83 +1358,128 @@ export const getMovimientosPuntos = async (clienteId: string): Promise<Movimient
 
 // ============ FUNCIONES DE GESTIÓN DE CACHE ============
 
-// Función para limpiar todos los caches relacionados con clientes
+// Limpia todos los caches relacionados con clientes (uso manual / soporte).
 export const clearClientesCache = () => {
-  const today = new Date().toDateString();
-  
-  // Cache del contador
-  localStorage.removeItem('clientes-count');
-  localStorage.removeItem('clientes-count-time');
-  
-  // Cache de lista completa
-  localStorage.removeItem(`clientes-todos-${today}`);
-  localStorage.removeItem(`clientes-todos-time-${today}`);
-  
-  // Cache de dashboard
-  localStorage.removeItem('dashboard-admin');
-  localStorage.removeItem('dashboard-time-admin');
-  
-  console.log('🧹 Todos los caches de clientes limpiados manualmente');
+  clientesMem = null;
+  purgeAppCaches();
+  console.log('🧹 Caches de clientes limpiados');
 };
 
-// Función para limpiar cache de servicios (cuando admin los modifica)
+// Limpia el cache de servicios (se llama al crear/editar/desactivar servicios).
 export const clearServiciosCache = () => {
-  localStorage.removeItem('servicios-activos');
-  localStorage.removeItem('servicios-activos-time');
-  console.log('🧹 Cache de servicios limpiado');
+  safeRemoveItem('servicios-activos');
+  safeRemoveItem('servicios-activos-time');
 };
 
-// ============ FUNCIONES CON CACHE PARA DASHBOARD ============
+// ============ DASHBOARD ============
+//
+// Ventas del mes en curso con cache en localStorage.
+// - Admin: tras la carga inicial del mes solo pide las ventas creadas desde la
+//   última consulta (por `createdAt`), en vez de releer todo el mes. Se hace
+//   una recarga completa cada hora para reflejar ventas eliminadas.
+// - Cajero: recarga completa cada 2 minutos (solo sus ventas, pocas lecturas).
 
-// Función para obtener datos del dashboard CON CACHE (2 minutos)
+interface DashboardCache {
+  mes: string;               // "AAAA-M"
+  ventas: Venta[];
+  fullLoadAt: number;        // última recarga completa (hora local)
+  lastCheckAt: number;       // última consulta (hora local)
+}
+
+const DASHBOARD_CAJERO_TTL_MS = 2 * 60 * 1000;
+const DASHBOARD_ADMIN_DELTA_MS = 60 * 1000;
+const DASHBOARD_ADMIN_FULL_MS = 60 * 60 * 1000;
+// Tolerancia a relojes desfasados entre computadoras (createdAt usa hora local).
+const DASHBOARD_DELTA_MARGIN_MS = 15 * 60 * 1000;
+
+const dashboardKey = (cajeroId?: string) => `dashboard-${cajeroId || 'admin'}`;
+
+const invalidateDashboardCache = (cajeroId?: string) => {
+  if (cajeroId) safeRemoveItem(dashboardKey(cajeroId));
+  // La caché admin no se borra: la sincronización incremental recoge las ventas nuevas.
+  // Solo se fuerza la consulta del delta en la próxima visita.
+  const admin = safeGetJSON<DashboardCache>(dashboardKey());
+  if (admin) safeSetItem(dashboardKey(), JSON.stringify({ ...admin, lastCheckAt: 0 }));
+};
+
+const reviveVentas = (ventas: Venta[]): Venta[] =>
+  ventas.map((v) => ({ ...v, fecha: new Date(v.fecha), createdAt: new Date(v.createdAt) }));
+
+const mapVentaDoc = (id: string, raw: DocumentData): Venta => ({
+  id,
+  clienteId: raw.clienteId,
+  clienteNombre: raw.clienteNombre,
+  servicioId: raw.servicioId,
+  servicioNombre: raw.servicioNombre,
+  precio: Number(raw.precio),
+  metodoPago: raw.metodoPago || 'efectivo',
+  cajeroId: raw.cajeroId,
+  cajeroNombre: raw.cajeroNombre,
+  cajeroEmail: raw.cajeroEmail || '',
+  fecha: raw.fecha instanceof Timestamp ? raw.fecha.toDate() : new Date('Invalid Date'),
+  createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt.toDate() : new Date('Invalid Date'),
+});
+
+/** Ventas del mes en curso (con cache). `cajeroId` limita a las ventas de ese cajero. */
+export const getVentasMesActual = async (cajeroId?: string): Promise<Venta[]> => {
+  const hoy = new Date();
+  const mes = `${hoy.getFullYear()}-${hoy.getMonth() + 1}`;
+  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1, 0, 0, 0, 0);
+  const finMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0, 23, 59, 59, 999);
+  const key = dashboardKey(cajeroId);
+  const now = Date.now();
+
+  const stored = safeGetJSON<DashboardCache>(key);
+  const cache = stored && stored.mes === mes && Array.isArray(stored.ventas)
+    ? { ...stored, ventas: reviveVentas(stored.ventas) }
+    : null;
+
+  const guardar = (c: DashboardCache) => {
+    safeSetItem(key, JSON.stringify(c));
+    return c.ventas;
+  };
+
+  if (cajeroId) {
+    if (cache && now - cache.fullLoadAt < DASHBOARD_CAJERO_TTL_MS) return cache.ventas;
+    const ventas = await getVentas(cajeroId, inicioMes, finMes);
+    return guardar({ mes, ventas, fullLoadAt: now, lastCheckAt: now });
+  }
+
+  if (!cache || now - cache.fullLoadAt > DASHBOARD_ADMIN_FULL_MS) {
+    console.log('📊 Carga completa de ventas del mes');
+    const ventas = await getVentas(undefined, inicioMes, finMes);
+    return guardar({ mes, ventas, fullLoadAt: now, lastCheckAt: now });
+  }
+
+  if (now - cache.lastCheckAt < DASHBOARD_ADMIN_DELTA_MS) return cache.ventas;
+
+  const ultimaCreada = cache.ventas.reduce(
+    (max, v) => Math.max(max, isNaN(v.createdAt.getTime()) ? 0 : v.createdAt.getTime()),
+    inicioMes.getTime()
+  );
+  const desde = Timestamp.fromMillis(ultimaCreada - DASHBOARD_DELTA_MARGIN_MS);
+  const snapshot = await getDocs(query(collection(db, 'ventas'), where('createdAt', '>', desde)));
+
+  const byId = new Map(cache.ventas.map((v) => [v.id, v]));
+  snapshot.docs
+    .map((d) => mapVentaDoc(d.id, d.data()))
+    .filter((v) => v.fecha >= inicioMes && v.fecha <= finMes)
+    .forEach((v) => byId.set(v.id, v));
+
+  const ventas = Array.from(byId.values()).sort((a, b) => b.fecha.getTime() - a.fecha.getTime());
+  return guardar({ ...cache, ventas, lastCheckAt: now });
+};
+
+// Datos del dashboard: ventas del mes (cache) + total de clientes (agregación).
 export const getDashboardData = async (cajeroId?: string) => {
   try {
-    const cacheKey = `dashboard-${cajeroId || 'admin'}`;
-    const cacheTimeKey = `dashboard-time-${cajeroId || 'admin'}`;
-    const cached = localStorage.getItem(cacheKey);
-    const cacheTime = localStorage.getItem(cacheTimeKey);
-    
-    // Cache válido por 2 minutos (120,000 ms) - reducido para datos más frescos
-    if (cached && cacheTime && (Date.now() - parseInt(cacheTime)) < 2 * 60 * 1000) {
-      console.log('📊 Usando datos de dashboard desde cache');
-      const parsedCache = JSON.parse(cached);
-      // Convertir fechas de string a Date
-      parsedCache.ventas = parsedCache.ventas.map((v: any) => ({
-        ...v,
-        fecha: new Date(v.fecha),
-        createdAt: new Date(v.createdAt)
-      }));
-      return parsedCache;
-    }
-    
-    // Cache expirado o no existe - consultar Firebase
-    console.log('📊 Consultando datos de dashboard desde Firebase');
-    
-    // Obtener inicio del mes actual para cargar ventas relevantes
-    const hoy = new Date();
-    const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1, 0, 0, 0, 0);
-    const finMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0, 23, 59, 59, 999);
-    
-    const [ventasData, clientesData] = await Promise.all([
-      // Cargar ventas del mes actual (sin límite estricto para dashboard)
-      getVentas(cajeroId, inicioMes, finMes, 500),
-      getClientesPaginados(20)
+    const [ventas, clientesTotal] = await Promise.all([
+      getVentasMesActual(cajeroId),
+      getClientesCount(),
     ]);
-    
-    const dashboardData = {
-      ventas: ventasData,
-      clientes: clientesData,
-      timestamp: Date.now()
-    };
-    
-    // Guardar en cache
-    localStorage.setItem(cacheKey, JSON.stringify(dashboardData));
-    localStorage.setItem(cacheTimeKey, Date.now().toString());
-    
-    return dashboardData;
+    return { ventas, clientesTotal, timestamp: Date.now() };
   } catch (error) {
     console.error('Error getting dashboard data:', error);
     throw new Error('Error obteniendo datos del dashboard');
   }
 };
-

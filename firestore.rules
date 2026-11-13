@@ -10,20 +10,35 @@ service cloud.firestore {
       return request.auth != null;
     }
     
+    // Rol del usuario autenticado (1 lectura por petición; Firestore la reutiliza
+    // dentro de la misma evaluación).
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function hasProfile() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     // Verificar si el usuario es admin
     function isAdmin() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return hasProfile() && userRole() == 'admin';
     }
     
     // Verificar si el usuario es cajero o admin
     function isCajeroOrAdmin() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier' ||
-              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cajero');
+      return hasProfile() && userRole() in ['admin', 'cashier', 'cajero'];
+    }
+
+    // El documento leído pertenece al usuario (campo cajeroId)
+    function isOwnRecord() {
+      return resource.data.cajeroId == request.auth.uid;
+    }
+
+    // El documento que se crea queda a nombre del usuario (no de otro cajero)
+    function createsOwnRecord() {
+      return request.resource.data.cajeroId == request.auth.uid;
     }
 
     // Verificar si es el propio usuario
@@ -51,9 +66,11 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // VENTAS - Admin y cajeros pueden crear y leer ventas
+    // VENTAS - Admin ve todas; el cajero solo las propias.
+    // Todos registran ventas solo a su nombre.
     match /ventas/{ventaId} {
-      allow read, create: if isCajeroOrAdmin();
+      allow read: if isAdmin() || (isCajeroOrAdmin() && isOwnRecord());
+      allow create: if isCajeroOrAdmin() && createsOwnRecord();
       allow update, delete: if isAdmin();
     }
 
@@ -71,8 +88,8 @@ service cloud.firestore {
 
     // ADELANTOS - Admin puede todo, cajeros pueden crear y leer
     match /adelantos/{adelantoId} {
-      allow read: if isCajeroOrAdmin();
-      allow create: if isCajeroOrAdmin();
+      allow read: if isAdmin() || (isCajeroOrAdmin() && isOwnRecord());
+      allow create: if isAdmin() || (isCajeroOrAdmin() && createsOwnRecord());
       allow update, delete: if isAdmin();
     }
 
@@ -86,13 +103,15 @@ service cloud.firestore {
 
     // CANJES DE PUNTOS - Admin y cajeros pueden crear y leer
     match /canjes_puntos/{canjeId} {
-      allow read, create: if isCajeroOrAdmin();
+      allow read: if isCajeroOrAdmin();
+      allow create: if isCajeroOrAdmin() && createsOwnRecord();
       allow update, delete: if isAdmin();
     }
 
     // MOVIMIENTOS DE PUNTOS - Admin y cajeros pueden crear y leer
     match /movimientos_puntos/{movimientoId} {
-      allow read, create: if isCajeroOrAdmin();
+      allow read: if isCajeroOrAdmin();
+      allow create: if isCajeroOrAdmin() && createsOwnRecord();
       allow update, delete: if isAdmin();
     }
 

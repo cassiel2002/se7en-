@@ -2,7 +2,7 @@
 // Ejecutar una sola vez para configurar el sistema de puntos
 
 import { initializePremios } from '../firebase/initPremios';
-import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
 export const initDevData = async () => {
@@ -31,7 +31,8 @@ export const fixVisitas = async () => {
       
       if (data.visitas !== visitasCorrectas) {
         await updateDoc(doc(db, 'clientes', document.id), {
-          visitas: visitasCorrectas
+          visitas: visitasCorrectas,
+          updatedAt: serverTimestamp()
         });
         actualizados++;
       }
