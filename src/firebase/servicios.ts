@@ -46,12 +46,12 @@ const mapServicioDoc = (id: string, data: DocumentData): Servicio => ({
   createdAt: toDateOrUndefined(data.createdAt) || new Date(),
 });
 
-const SERVICIOS_CACHE_TTL_MS = 60 * 60 * 1000;
+const SERVICIOS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Servicios activos para los formularios de Agenda y Ventas.
- * Cache de 1 hora: son pocos documentos y así los cambios del admin llegan
- * a las demás computadoras sin esperar un día.
+ * Cache de 5 minutos: son pocos documentos y así los cambios de precio del admin llegan
+ * a las demás computadoras en pocos minutos.
  */
 export const getServiciosActivos = async (): Promise<Servicio[]> => {
   try {

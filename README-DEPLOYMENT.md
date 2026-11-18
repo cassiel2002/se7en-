@@ -92,9 +92,13 @@ Reduce una lectura por consulta. Instrucciones en [`tools/README.md`](tools/READ
 Era el almacenamiento del navegador (`localStorage`, ~5 MB), no Firebase. Desde la v4.0
 la app libera el espacio sola al abrirse y, si aun así falta, sigue funcionando sin cache.
 
-### "La venta fue rechazada: el precio del servicio cambió"
-El admin cambió el precio y el formulario tenía el anterior. La app recarga los precios
-automáticamente; basta con volver a intentar.
+### Cambios de precio
+Cada PC actualiza los precios cada 5 minutos. Una venta hecha en ese intervalo con el
+precio anterior se registra igual (las reglas no lo bloquean).
+
+### "La venta fue rechazada por permisos"
+Suele ser una pestaña abierta con una versión vieja de la app: recargá la página.
+Si persiste, revisá que el usuario tenga perfil en `users/{uid}` con rol válido.
 
 ### El dashboard muestra montos distintos a Reportes
 Reportes calcula a partir de cada venta; el dashboard usa los resúmenes diarios. Si una

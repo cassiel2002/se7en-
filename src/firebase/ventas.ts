@@ -47,7 +47,7 @@ export const mapVentaDoc = (id: string, raw: DocumentData): Venta => ({
  * - la venta (createdAt con hora del servidor),
  * - +1 visita y +1 punto al cliente (si existe) y su movimiento de puntos,
  * - la suma en el resumen del día.
- * Las reglas de Firestore validan que el precio coincida con el del servicio.
+ * Las reglas de Firestore validan que la venta quede a nombre del cajero y con la hora del servidor.
  */
 export const createVenta = async (data: NuevaVenta, user: User): Promise<string> => {
   if (!user?.uid || !user.email) {

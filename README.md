@@ -78,7 +78,7 @@ npx firebase-tools@13 emulators:start --only auth,firestore --project demo-se7en
   día (`resumenes_ventas`) en lugar de cada venta.
 - **Integridad:** una venta, su punto y su resumen se escriben en un único batch; el canje
   es una transacción. Las reglas verifican que los puntos solo cambien junto con una venta
-  o canje real, que el precio coincida con el del servicio y que cada cajero registre solo
-  a su nombre.
+  o canje real, que la venta tenga la hora del servidor y que cada cajero registre solo
+  a su nombre. Los precios se cachean 5 minutos en cada PC.
 - **Roles:** `admin` y `cashier` (`cajero` se acepta como sinónimo histórico). Las reglas
   leen el rol del token (custom claim) y, si no está, del perfil `users/{uid}`.

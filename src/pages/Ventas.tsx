@@ -270,8 +270,8 @@ export const Ventas: React.FC = () => {
       console.error('Error creating venta:', error);
       const code = (error as { code?: string })?.code;
       if (code === 'permission-denied') {
-        // Lo más probable: el precio del servicio cambió y el formulario tenía el anterior.
-        toast.error('La venta fue rechazada: el precio del servicio cambió. Se actualizaron los precios; volvé a intentar.');
+        // Causas habituales: el servicio fue eliminado o la pestaña tiene una versión vieja.
+        toast.error('La venta fue rechazada por permisos. Recargá la página y volvé a intentar; si persiste, avisá al administrador.');
         loadData();
       } else {
         toast.error(getFriendlyErrorMessage(error));

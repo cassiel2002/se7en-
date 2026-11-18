@@ -160,8 +160,11 @@ describe('ventas', () => {
   it('venta a un cliente sin campos de puntos (datos viejos)', async () => {
     await assertSucceeds(registrarVenta(as('caj1'), 'caj1', { clienteId: 'sinPuntos' }));
   });
-  it('rechaza precio distinto al del servicio', async () => {
-    await assertFails(registrarVenta(as('caj1'), 'caj1', { precio: 1 }));
+  it('acepta un precio distinto al actual del servicio (precio en cache)', async () => {
+    await assertSucceeds(registrarVenta(as('caj1'), 'caj1', { precio: 4500 }));
+  });
+  it('rechaza precio negativo', async () => {
+    await assertFails(registrarVenta(as('caj1'), 'caj1', { precio: -100 }));
   });
   it('rechaza venta a nombre de otro cajero', async () => {
     await assertFails(setDoc(doc(as('caj1'), 'ventas/x'), { cajeroId: 'caj2', precio: 5000, servicioId: 's1', createdAt: serverTimestamp() }));

@@ -140,13 +140,15 @@ service cloud.firestore {
     // ============ VENTAS ============
 
     // Venta registrada por un cajero: a su nombre, con la hora del servidor y con
-    // el precio vigente del servicio.
+    // un precio válido. No se exige que coincida con el precio actual del servicio:
+    // un cambio de precio del admin rechazaba ventas en PCs con el precio en cache.
     function ventaDeCajeroValida() {
       let v = request.resource.data;
       return createsOwnRecord() &&
              v.createdAt == request.time &&
              v.precio is number &&
-             v.precio == get(docPath('servicios', v.servicioId)).data.precio &&
+             v.precio >= 0 &&
+             exists(docPath('servicios', v.servicioId)) &&
              v.keys().hasOnly(['clienteId', 'clienteNombre', 'servicioId', 'servicioNombre', 'precio',
                                'metodoPago', 'fecha', 'cajeroId', 'cajeroNombre', 'cajeroEmail', 'createdAt']);
     }
